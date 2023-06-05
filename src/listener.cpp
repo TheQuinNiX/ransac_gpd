@@ -8,44 +8,23 @@
 #include "pcl/segmentation/sac_segmentation.h"
 #include "pcl/filters/extract_indices.h"
 #include "pcl/filters/passthrough.h"
+#include "visualization_msgs/Marker.h"
 #include "time.h"
 #include "limits"
 #include "iostream"
 #include "math.h"
 #include "float.h"
 
-ros::Publisher pub;
+ros::Publisher pub_pointcloud;
+ros::Publisher pub_marker;
 
-/*
-float findMaxHeight(pcl::PointCloud<pcl::PointXYZ>::Ptr& input) {
-    float maxZ = 0.0;
-
-    for (int x = 1; x < input->height; x++)
-    {
-        for (int y = 1; y < input->width; y++)
-        {
-            if (pcl::isFinite(input->at(x,y).z))
-            {
-                float tmpZ = input->at(x,y).z;
-                if (maxZ < tmpZ)
-                {
-                    maxZ = tmpZ;
-                }
-                
-            }
-            
-        }
-    }
-
-    return maxZ;
-}
-*/
-
-template<typename T>
-bool is_nan( const T &value )
+bool checkPointNaN(pcl::PointXYZ& input)
 {
-    // True if NAN
-    return value != value;
+    if (input.x == input.x)
+    {
+        return false;
+    }
+    return true;
 }
 
 float getAngle(pcl::PointXYZ& a, pcl::PointXYZ& b)
@@ -134,7 +113,7 @@ void rectifyTilt(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
     // Ransac
-    pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
+    pcl::ModelCoefficients::Ptr coefficients_ptr (new pcl::ModelCoefficients);
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
 
     // created RandomSampleConsensus object and compute the appropriated model
@@ -143,78 +122,143 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setDistanceThreshold(0.004);
     seg.setInputCloud(input);
-    seg.segment(*inliers, *coefficients);
+    seg.segment(*inliers, *coefficients_ptr);
     
-    pcl::ExtractIndices<pcl::PointXYZ> extrInliers;
-    extrInliers.setInputCloud(input);
-    extrInliers.setIndices(inliers);
-    extrInliers.setNegative(true);
-    extrInliers.filter(*input);
+    pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
+    extr_inliers_filter.setInputCloud(input);
+    extr_inliers_filter.setIndices(inliers);
+    extr_inliers_filter.setNegative(true);
+    extr_inliers_filter.filter(*input);
     
-    pcl::PassThrough<pcl::PointXYZ> pass;
-    pass.setInputCloud (input);
-    pass.setFilterFieldName ("z");
-    pass.setFilterLimits (input->at(inliers->indices.at(100)).z,1.0);
-    pass.setNegative (false);
-    pass.filter (*input);
+    pcl::PassThrough<pcl::PointXYZ> pass_filter;
+    pass_filter.setInputCloud (input);
+    pass_filter.setFilterFieldName ("z");
+    pass_filter.setFilterLimits (input->at(inliers->indices.at(100)).z,1.0);
+    pass_filter.setNegative (false);
+    pass_filter.filter (*input);
 }
 
-void dpCallback(const sensor_msgs::PointCloud2& senMsgPc2)
+void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
-    // start timer
-    struct timespec begin, end;
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
+    // Ransac
+    pcl::ModelCoefficients::Ptr coefficients_ptr (new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers_ptr (new pcl::PointIndices);
 
-    // create pcl pointcloud and convert sensor_msgs pointcloud2 to pcl pointcloud
-    pcl::PointCloud<pcl::PointXYZ>::Ptr pclPcPtr(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::fromROSMsg(senMsgPc2, *pclPcPtr);
+    // created RandomSampleConsensus object and compute the appropriated model
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    seg.setModelType(pcl::SACMODEL_CYLINDER);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(0.1);
+    seg.setRadiusLimits(0, 0.1);
+    seg.setInputCloud(input);
+    seg.segment(*inliers_ptr, *coefficients_ptr);
+    
+    pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
+    extr_inliers_filter.setInputCloud(input);
+    extr_inliers_filter.setIndices(inliers_ptr);
+    extr_inliers_filter.setNegative(true);
+    extr_inliers_filter.filter(*input);
+}
 
-    // remove nan from pcl pointcloud
-    //std::vector<int> indices;
-    //pcl::removeNaNFromPointCloud(*pclPcPtr,*pclPcPtr, indices);
+pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+{
+    pcl::PointXYZ point_z_max;
+    pcl::PointXYZ point_temp;
+    int input_row = input->height;
+    int input_colum = input->width;
 
-
-    // fix tilted pointcloud
-    rectifyTilt(pclPcPtr);
-
-    /*
-    if (pclPcPtr->at(0,0).x != pclPcPtr->at(0,0).x)
+    for (int r = 0; r < input_row; r++)
     {
-        int c = 0;
-        int r = 50;
+        for (int c = 0; c < input_colum; c++)
+        {            
+            point_temp = input->at(c, r);
 
-        while ((pclPcPtr->at(c,r).x != pclPcPtr->at(c,r).x))
-        {
-            c = c + 1;
+            if (!checkPointNaN(point_temp))
+            {                
+                if (point_z_max.z < point_temp.z)
+                {
+                    point_z_max = point_temp;
+                }
+            }
         }
-        
-        //ROS_INFO_STREAM("X("<< c <<",0): " << pclPcPtr->at(c,r).x << " Y("<< c <<",0): " << pclPcPtr->at(c,r).y << " Z("<< c <<",0): " << pclPcPtr->at(c,r).z);
-        //ROS_INFO_STREAM("X("<< c+10 <<",0): " << pclPcPtr->at(c+10,r).x << " Y("<< c+10 <<",0): " << pclPcPtr->at(c+10,r).y << " Z("<< c+10 <<",0): " << pclPcPtr->at(c+10,r).z);
-        ROS_INFO_STREAM("angle: " << getAngle(pclPcPtr->at(c,r),pclPcPtr->at(c+10,r)));
     }
-    else
-    {
-        ROS_INFO_STREAM("X(0,0): " << pclPcPtr->at(0,0).x << " Y(0,0): " << pclPcPtr->at(0,0).x << " Z(0,0): " << pclPcPtr->at(0,0).x);
-    }
+
+    return point_z_max;
+}
+
+void setMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ input_point)
+{
+    input_marker->header.frame_id = "depth_camera_link";
+    input_marker->header.stamp = ros::Time::now();
+    input_marker->type = visualization_msgs::Marker::ARROW;
+    input_marker->ns = "z_max";
+    input_marker->id = 0;
+    input_marker->action = visualization_msgs::Marker::ADD;
+
+    // Set the position and orientation of the marker
+    input_marker->pose.position.x = input_point.x;
+    input_marker->pose.position.y = input_point.y;
+    input_marker->pose.position.z = input_point.z;
+    input_marker->pose.orientation.x = 0.0;
+    input_marker->pose.orientation.y = 0.5;
+    input_marker->pose.orientation.z = 0.0;
+    input_marker->pose.orientation.w = 0.5;
+  
+    // Set the scale of the marker
+    input_marker->scale.x = 0.03;
+    input_marker->scale.y = 0.003;
+    input_marker->scale.z = 0.003;
+  
+    // Set the color of the marker
+    input_marker->color.r = 1.0f;
+    input_marker->color.g = 0.0f;
+    input_marker->color.b = 0.0f;
+    input_marker->color.a = 1.0;
+
+    input_marker->lifetime = ros::Duration();
+}
+
+void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
+{
+    /* // start timer
+    //struct timespec begin, end;
+    //clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
     */
 
+    // create pcl pointcloud and convert sensor_msgs pointcloud2 to pcl pointcloud
+    pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_ptr(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::fromROSMsg(sen_msg_pc2, *pcl_pc_ptr);
 
+    // create a marker and pointer
+    visualization_msgs::MarkerPtr marker_ptr(new visualization_msgs::Marker);
+
+    // fix tilted pointcloud
+    rectifyTilt(pcl_pc_ptr);
+
+    // setup marker
+    setMarker(marker_ptr, getPointMaxZ(pcl_pc_ptr));
 
     // remove every point from the pointcloud representing the groundplane
-    removeGroundPlane(pclPcPtr);
+    removeGroundPlane(pcl_pc_ptr);
 
-    // publish pointcloud to pclEdit topic
-    pub.publish(*pclPcPtr);
+    // find cylinder
+    //findCylinder(pcl_pc_ptr);
 
-    // stop timer and get result
+    // publish marker to "visualization_marker" topic
+    pub_marker.publish(marker_ptr);
+
+    // publish pointcloud to "pclEdit" topic
+    pub_pointcloud.publish(*pcl_pc_ptr);
+
+    /* // stop timer and get result
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
 
     long seconds = end.tv_sec - begin.tv_sec;
     long nanoseconds = end.tv_nsec - begin.tv_nsec;
     double elapsed = seconds + nanoseconds*1e-9;
     
-    //ROS_INFO_STREAM("Time measured: " << elapsed);
-
+    ROS_INFO_STREAM("Time measured: " << elapsed);
+    */
 }
 
 int main(int argc, char **argv)
@@ -223,7 +267,8 @@ int main(int argc, char **argv)
     
     ros::init(argc, argv, "listener");
     ros::NodeHandle n;
-    pub = n.advertise<sensor_msgs::PointCloud2>("pclEdit", 10);
+    pub_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pclEdit", 10);
+    pub_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 10);
     ros::Subscriber sub = n.subscribe("depth/points", 10, dpCallback);
     ros::Rate loop_rate(10);
 
