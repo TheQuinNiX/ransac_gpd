@@ -9,6 +9,7 @@
 #include "pcl/filters/extract_indices.h"
 #include "pcl/filters/passthrough.h"
 #include "visualization_msgs/Marker.h"
+#include "pcl/features/normal_3d.h"
 #include "time.h"
 #include "limits"
 #include "iostream"
@@ -18,6 +19,7 @@
 ros::Publisher pub_pointcloud;
 ros::Publisher pub_marker;
 
+// This function checks a point for NaN value. If Point value is NaN the function returns 1, otherwise 0.
 bool checkPointNaN(pcl::PointXYZ& input)
 {
     if (input.x == input.x)
@@ -109,7 +111,7 @@ void rectifyTilt(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     transform.rotate(Eigen::AngleAxisf((0*M_PI) / 180, Eigen::Vector3f::UnitZ()));
     pcl::transformPointCloud(*input, *input, transform);
 }
-
+// This function uses RANSAC to remove all points representing the groundplane form a pointcloud.
 void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
     // Ransac
@@ -148,30 +150,55 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setMaxIterations (10000);
     seg.setDistanceThreshold(0.1);
-    seg.setRadiusLimits(0, 0.1);
+    seg.setRadiusLimits(0.01, 0.1);
     seg.setInputCloud(input);
+    //ToDo: seg.setInputNormals (cloud_normals2);
     seg.segment(*inliers_ptr, *coefficients_ptr);
-    
+
+    /*
     pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
     extr_inliers_filter.setInputCloud(input);
     extr_inliers_filter.setIndices(inliers_ptr);
     extr_inliers_filter.setNegative(true);
     extr_inliers_filter.filter(*input);
+    */
 }
-
+// This function returns the point with the highest z value from a pointcloud.
 pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
     pcl::PointXYZ point_z_max;
     pcl::PointXYZ point_temp;
-    int input_row = input->height;
-    int input_colum = input->width;
 
-    for (int r = 0; r < input_row; r++)
+    if (input->isOrganized())
     {
-        for (int c = 0; c < input_colum; c++)
+        int input_row = input->height;
+        int input_colum = input->width;
+
+        for (int r = 0; r < input_row; r++)
+        {
+            for (int c = 0; c < input_colum; c++)
+            {            
+                point_temp = input->at(c, r);
+
+                if (!checkPointNaN(point_temp))
+                {                
+                    if (point_z_max.z < point_temp.z)
+                    {
+                        point_z_max = point_temp;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        int input_length = input->size();
+
+        for (int i = 0; i < input_length; i++)
         {            
-            point_temp = input->at(c, r);
+            point_temp = input->at(i);
 
             if (!checkPointNaN(point_temp))
             {                
@@ -185,12 +212,12 @@ pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 
     return point_z_max;
 }
-
+// This function sets the marker position to the given point.
 void setMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ input_point)
 {
     input_marker->header.frame_id = "depth_camera_link";
     input_marker->header.stamp = ros::Time::now();
-    input_marker->type = visualization_msgs::Marker::ARROW;
+    input_marker->type = visualization_msgs::Marker::SPHERE;
     input_marker->ns = "z_max";
     input_marker->id = 0;
     input_marker->action = visualization_msgs::Marker::ADD;
@@ -200,14 +227,14 @@ void setMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ input_
     input_marker->pose.position.y = input_point.y;
     input_marker->pose.position.z = input_point.z;
     input_marker->pose.orientation.x = 0.0;
-    input_marker->pose.orientation.y = 0.5;
+    input_marker->pose.orientation.y = 0.0;
     input_marker->pose.orientation.z = 0.0;
-    input_marker->pose.orientation.w = 0.5;
+    input_marker->pose.orientation.w = 1.0;
   
     // Set the scale of the marker
-    input_marker->scale.x = 0.03;
-    input_marker->scale.y = 0.003;
-    input_marker->scale.z = 0.003;
+    input_marker->scale.x = 0.01;
+    input_marker->scale.y = 0.01;
+    input_marker->scale.z = 0.01;
   
     // Set the color of the marker
     input_marker->color.r = 1.0f;
@@ -235,11 +262,11 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     // fix tilted pointcloud
     rectifyTilt(pcl_pc_ptr);
 
-    // setup marker
-    setMarker(marker_ptr, getPointMaxZ(pcl_pc_ptr));
-
     // remove every point from the pointcloud representing the groundplane
     removeGroundPlane(pcl_pc_ptr);
+
+    // setup marker
+    setMarker(marker_ptr, getPointMaxZ(pcl_pc_ptr));
 
     // find cylinder
     //findCylinder(pcl_pc_ptr);
