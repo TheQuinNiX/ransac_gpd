@@ -18,6 +18,7 @@
 
 ros::Publisher pub_pointcloud;
 ros::Publisher pub_marker;
+typedef pcl::PointXYZ PointT;
 
 // This function checks a point for NaN value. If Point value is NaN the function returns 1, otherwise 0.
 bool checkPointNaN(pcl::PointXYZ& input)
@@ -27,6 +28,160 @@ bool checkPointNaN(pcl::PointXYZ& input)
         return false;
     }
     return true;
+}
+
+// This function returns the point with the highest z value from a pointcloud.
+pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+{
+    pcl::PointXYZ point_z_max;
+    pcl::PointXYZ point_temp;
+
+    if (input->isOrganized())
+    {
+        int input_row = input->height;
+        int input_colum = input->width;
+
+        for (int r = 0; r < input_row; r++)
+        {
+            for (int c = 0; c < input_colum; c++)
+            {            
+                point_temp = input->at(c, r);
+
+                if (!checkPointNaN(point_temp))
+                {                
+                    if (point_z_max.z < point_temp.z)
+                    {
+                        point_z_max = point_temp;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        int input_length = input->size();
+
+        for (int i = 0; i < input_length; i++)
+        {            
+            point_temp = input->at(i);
+
+            if (!checkPointNaN(point_temp))
+            {                
+                if (point_z_max.z < point_temp.z)
+                {
+                    point_z_max = point_temp;
+                }
+            }
+        }
+    }
+
+    return point_z_max;
+}
+pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::PointIndices::Ptr& indices_input)
+{
+    pcl::PointXYZ point_z_max;
+    pcl::PointXYZ point_temp;
+
+    int indices_input_length = indices_input->indices.size();
+
+    for (int i = 0; i < indices_input_length; i++)
+    {            
+        point_temp = input->at(indices_input->indices.at(i));
+
+        if (!checkPointNaN(point_temp))
+        {                
+            if (point_z_max.z < point_temp.z)
+            {
+                point_z_max = point_temp;
+            }
+        }
+    }
+
+    ROS_INFO_STREAM(point_z_max.z);
+    return point_z_max;
+}
+
+// This function returns the point with the highest z value from a pointcloud.
+pcl::PointXYZ getPointMinZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+{
+    pcl::PointXYZ point_z_min;
+    pcl::PointXYZ point_temp;
+
+    if (input->isOrganized())
+    {
+        int input_row = input->height;
+        int input_colum = input->width;
+
+        for (int r = 0; r < input_row; r++)
+        {
+            for (int c = 0; c < input_colum; c++)
+            {            
+                point_temp = input->at(c, r);
+
+                if (!checkPointNaN(point_temp))
+                {                
+                    if (point_z_min.z > point_temp.z)
+                    {
+                        point_z_min = point_temp;
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        int input_length = input->size();
+
+        for (int i = 0; i < input_length; i++)
+        {            
+            point_temp = input->at(i);
+
+            if (!checkPointNaN(point_temp))
+            {                
+                if (point_z_min.z > point_temp.z)
+                {
+                    point_z_min = point_temp;
+                }
+            }
+        }
+    }
+
+    return point_z_min;
+}
+
+// This function adds the highest negative z value of the pointcloud, to each point of a pointcloud, so minimum z value will be 0.0.
+void moveUp(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+{
+    pcl::PointXYZ point_z_min = getPointMinZ(input);
+
+    if (input->isOrganized())
+    {
+        int input_row = input->height;
+        int input_colum = input->width;
+
+        for (int r = 0; r < input_row; r++)
+        {
+            for (int c = 0; c < input_colum; c++)
+            {
+                if (!checkPointNaN(input->at(c,r)))
+                {                
+                    input->at(c,r).z = input->at(c,r).z + fabsf(point_z_min.z);
+                }
+            }
+        }
+    }
+    else
+    {
+        int input_length = input->size();
+
+        for (int i = 0; i < input_length; i++)
+        {
+            if (!checkPointNaN(input->at(i)))
+            {
+                input->at(i).z = input->at(i).z + fabsf(point_z_min.z);
+            }
+        }
+    }
 }
 
 float getAngle(pcl::PointXYZ& a, pcl::PointXYZ& b)
@@ -106,11 +261,12 @@ void rectifyTilt(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     Eigen::Affine3f transform = Eigen::Affine3f::Identity();
 
     transform.translation() << input->at(100, 100).x, input->at(100, 100).y, input->at(100, 100).z;
-    transform.rotate(Eigen::AngleAxisf((-186*M_PI) / 180, Eigen::Vector3f::UnitX()));
+    transform.rotate(Eigen::AngleAxisf((-187*M_PI) / 180, Eigen::Vector3f::UnitX()));
     transform.rotate(Eigen::AngleAxisf((0*M_PI) / 180, Eigen::Vector3f::UnitY()));
     transform.rotate(Eigen::AngleAxisf((0*M_PI) / 180, Eigen::Vector3f::UnitZ()));
     pcl::transformPointCloud(*input, *input, transform);
 }
+
 // This function uses RANSAC to remove all points representing the groundplane form a pointcloud.
 void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
@@ -126,16 +282,18 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     seg.setInputCloud(input);
     seg.segment(*inliers, *coefficients_ptr);
     
+    /*
     pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
     extr_inliers_filter.setInputCloud(input);
     extr_inliers_filter.setIndices(inliers);
     extr_inliers_filter.setNegative(true);
     extr_inliers_filter.filter(*input);
+    */
     
     pcl::PassThrough<pcl::PointXYZ> pass_filter;
     pass_filter.setInputCloud (input);
     pass_filter.setFilterFieldName ("z");
-    pass_filter.setFilterLimits (input->at(inliers->indices.at(100)).z,1.0);
+    pass_filter.setFilterLimits (getPointMaxZ(input, inliers).z, 1.0);
     pass_filter.setNegative (false);
     pass_filter.filter (*input);
 }
@@ -145,73 +303,54 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     // Ransac
     pcl::ModelCoefficients::Ptr coefficients_ptr (new pcl::ModelCoefficients);
     pcl::PointIndices::Ptr inliers_ptr (new pcl::PointIndices);
+    pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
+
+    pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+    ne.setInputCloud(input);
+
+    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ> ());
+    ne.setSearchMethod(tree);
+
+    pcl::PointCloud<pcl::Normal>::Ptr cloud_normals_ptr (new pcl::PointCloud<pcl::Normal>);
+    
+    ne.setKSearch(2);
+
+    ROS_INFO_STREAM("Compute normals");
+
+    ne.compute(*cloud_normals_ptr);
+
+    ROS_INFO_STREAM("Start SEC");
 
     // created RandomSampleConsensus object and compute the appropriated model
-    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    pcl::SACSegmentationFromNormals<pcl::PointXYZ, pcl::Normal> seg;
+    seg.setOptimizeCoefficients (true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setMaxIterations (10000);
-    seg.setDistanceThreshold(0.1);
-    seg.setRadiusLimits(0.01, 0.1);
+    seg.setNormalDistanceWeight (0.05);
+    seg.setMaxIterations (100000);
+    seg.setDistanceThreshold(0.9);
+    seg.setRadiusLimits(0.01, 0.9);
     seg.setInputCloud(input);
-    //ToDo: seg.setInputNormals (cloud_normals2);
+    seg.setInputNormals (cloud_normals_ptr);
+    seg.setNumberOfThreads(8);
     seg.segment(*inliers_ptr, *coefficients_ptr);
 
     /*
     pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
     extr_inliers_filter.setInputCloud(input);
-    extr_inliers_filter.setIndices(inliers_ptr);
-    extr_inliers_filter.setNegative(true);
+    extr_inliers_filter.setIndices(inliers);
+    extr_inliers_filter.setNegative(false);
     extr_inliers_filter.filter(*input);
+    
+    pcl::PassThrough<pcl::PointXYZ> pass_filter;
+    pass_filter.setInputCloud (input);
+    pass_filter.setFilterFieldName ("z");
+    pass_filter.setFilterLimits (input->at(inliers->indices.at(100)).z,1.0);
+    pass_filter.setNegative (false);
+    pass_filter.filter (*input);
     */
 }
-// This function returns the point with the highest z value from a pointcloud.
-pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
-{
-    pcl::PointXYZ point_z_max;
-    pcl::PointXYZ point_temp;
 
-    if (input->isOrganized())
-    {
-        int input_row = input->height;
-        int input_colum = input->width;
-
-        for (int r = 0; r < input_row; r++)
-        {
-            for (int c = 0; c < input_colum; c++)
-            {            
-                point_temp = input->at(c, r);
-
-                if (!checkPointNaN(point_temp))
-                {                
-                    if (point_z_max.z < point_temp.z)
-                    {
-                        point_z_max = point_temp;
-                    }
-                }
-            }
-        }
-    }
-    else
-    {
-        int input_length = input->size();
-
-        for (int i = 0; i < input_length; i++)
-        {            
-            point_temp = input->at(i);
-
-            if (!checkPointNaN(point_temp))
-            {                
-                if (point_z_max.z < point_temp.z)
-                {
-                    point_z_max = point_temp;
-                }
-            }
-        }
-    }
-
-    return point_z_max;
-}
 // This function sets the marker position to the given point.
 void setMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ input_point)
 {
@@ -262,6 +401,8 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     // fix tilted pointcloud
     rectifyTilt(pcl_pc_ptr);
 
+    moveUp(pcl_pc_ptr);
+
     // remove every point from the pointcloud representing the groundplane
     removeGroundPlane(pcl_pc_ptr);
 
@@ -269,7 +410,7 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     setMarker(marker_ptr, getPointMaxZ(pcl_pc_ptr));
 
     // find cylinder
-    //findCylinder(pcl_pc_ptr);
+    findCylinder(pcl_pc_ptr);
 
     // publish marker to "visualization_marker" topic
     pub_marker.publish(marker_ptr);
@@ -294,10 +435,10 @@ int main(int argc, char **argv)
     
     ros::init(argc, argv, "listener");
     ros::NodeHandle n;
-    pub_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pclEdit", 10);
-    pub_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 10);
+    pub_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pclEdit", 1);
+    pub_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
     ros::Subscriber sub = n.subscribe("depth/points", 10, dpCallback);
-    ros::Rate loop_rate(10);
+    ros::Rate loop_rate(1);
 
     while (ros::ok()) {
         ros::spinOnce();
