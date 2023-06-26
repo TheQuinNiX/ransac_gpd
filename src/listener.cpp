@@ -96,12 +96,10 @@ pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::Poin
             }
         }
     }
-
-    ROS_INFO_STREAM(point_z_max.z);
     return point_z_max;
 }
 
-// This function returns the point with the highest z value from a pointcloud.
+// This function returns the point with the lowest z value from a pointcloud.
 pcl::PointXYZ getPointMinZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
     pcl::PointXYZ point_z_min;
@@ -181,6 +179,58 @@ void moveUp(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
                 input->at(i).z = input->at(i).z + fabsf(point_z_min.z);
             }
         }
+    }
+}
+
+void moveDown(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+{
+    pcl::PointXYZ point_z_min = getPointMinZ(input);
+
+    if (input->isOrganized())
+    {
+        int input_row = input->height;
+        int input_colum = input->width;
+
+        for (int r = 0; r < input_row; r++)
+        {
+            for (int c = 0; c < input_colum; c++)
+            {
+                if (!checkPointNaN(input->at(c,r)))
+                {                
+                    input->at(c,r).z = input->at(c,r).z - fabsf(point_z_min.z);
+                }
+            }
+        }
+    }
+    else
+    {
+        int input_length = input->size();
+
+        for (int i = 0; i < input_length; i++)
+        {
+            if (!checkPointNaN(input->at(i)))
+            {
+                ROS_INFO_STREAM("at 0 = " << input->at(0).z);
+                ROS_INFO_STREAM("input z at i = " << input->at(i).z);
+                ROS_INFO_STREAM("pointcloud z min = " << fabsf(point_z_min.z));
+                input->at(i).z = input->at(i).z - fabsf(point_z_min.z);
+                
+            }
+        }
+    }
+}
+
+// This function mirrors the pointcloud in z direction.
+void mirrorPointcloudZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+{
+    int input_length = input->size();
+    pcl::PointXYZ point_temp;
+
+    for (int i = 0; i < input_length; i++)
+    {
+        point_temp = input->at(i);
+        point_temp.z = point_temp.z * -1;
+        input->push_back(point_temp);
     }
 }
 
@@ -274,7 +324,7 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     pcl::ModelCoefficients::Ptr coefficients_ptr (new pcl::ModelCoefficients);
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
 
-    // created RandomSampleConsensus object and compute the appropriated model
+    // create RandomSampleConsensus object and compute the appropriated model
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
@@ -289,7 +339,7 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     extr_inliers_filter.setNegative(true);
     extr_inliers_filter.filter(*input);
     */
-    
+
     pcl::PassThrough<pcl::PointXYZ> pass_filter;
     pass_filter.setInputCloud (input);
     pass_filter.setFilterFieldName ("z");
@@ -302,7 +352,6 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
     // Ransac
     pcl::ModelCoefficients::Ptr coefficients_ptr (new pcl::ModelCoefficients);
-    pcl::PointIndices::Ptr inliers_ptr (new pcl::PointIndices);
     pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
 
     pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
@@ -313,42 +362,30 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 
     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals_ptr (new pcl::PointCloud<pcl::Normal>);
     
-    ne.setKSearch(2);
-
-    ROS_INFO_STREAM("Compute normals");
+    ne.setKSearch(30);
 
     ne.compute(*cloud_normals_ptr);
 
-    ROS_INFO_STREAM("Start SEC");
-
-    // created RandomSampleConsensus object and compute the appropriated model
+    // create RandomSampleConsensus object and compute the appropriated model
     pcl::SACSegmentationFromNormals<pcl::PointXYZ, pcl::Normal> seg;
-    seg.setOptimizeCoefficients (true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setNormalDistanceWeight (0.05);
-    seg.setMaxIterations (100000);
-    seg.setDistanceThreshold(0.9);
-    seg.setRadiusLimits(0.01, 0.9);
+    seg.setMaxIterations (10000);
+    seg.setDistanceThreshold(0.4);
+    seg.setRadiusLimits(0.001, 0.1);
     seg.setInputCloud(input);
     seg.setInputNormals (cloud_normals_ptr);
     seg.setNumberOfThreads(8);
-    seg.segment(*inliers_ptr, *coefficients_ptr);
+    seg.segment(*inliers, *coefficients_ptr);
 
-    /*
+    ROS_INFO_STREAM("Cylinder inliers: " << inliers->indices.size());
+
     pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
     extr_inliers_filter.setInputCloud(input);
     extr_inliers_filter.setIndices(inliers);
     extr_inliers_filter.setNegative(false);
     extr_inliers_filter.filter(*input);
-    
-    pcl::PassThrough<pcl::PointXYZ> pass_filter;
-    pass_filter.setInputCloud (input);
-    pass_filter.setFilterFieldName ("z");
-    pass_filter.setFilterLimits (input->at(inliers->indices.at(100)).z,1.0);
-    pass_filter.setNegative (false);
-    pass_filter.filter (*input);
-    */
 }
 
 // This function sets the marker position to the given point.
@@ -405,6 +442,9 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
 
     // remove every point from the pointcloud representing the groundplane
     removeGroundPlane(pcl_pc_ptr);
+
+    // mirror pointcloud
+    //mirrorPointcloudZ(pcl_pc_ptr);
 
     // setup marker
     setMarker(marker_ptr, getPointMaxZ(pcl_pc_ptr));
