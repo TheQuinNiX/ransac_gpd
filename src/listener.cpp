@@ -330,6 +330,34 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     */
 }
 
+// This function uses RANSAC to fit a circle in to the given pointcloud.
+void findCircle(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoefficients::Ptr& output_coefficients, pcl::PointIndices::Ptr& output_point_indicies)
+{
+    Eigen::Vector3f axis = Eigen::Vector3f(1.0,0.0,0.0);
+
+    // create RandomSampleConsensus object and compute the appropriated model
+    pcl::SACSegmentation<pcl::PointXYZ> seg (true);
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType(pcl::SACMODEL_CIRCLE3D);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setMaxIterations (50000);
+    seg.setDistanceThreshold(0.009);
+    seg.setRadiusLimits(0.001, 0.015);
+    seg.setAxis(axis);
+    seg.setEpsAngle(10.0f * (M_PI/180.0f));
+    seg.setInputCloud(input);
+    seg.setNumberOfThreads(8);
+    seg.segment(*output_point_indicies, *output_coefficients);
+
+    /*
+    pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
+    extr_inliers_filter.setInputCloud(input);
+    extr_inliers_filter.setIndices(inliers);
+    extr_inliers_filter.setNegative(false);
+    extr_inliers_filter.filter(*input);
+    */
+}
+
 // This function uses RANSAC to fit a line in to the given pointcloud.
 void findLine(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoefficients::Ptr& output_coefficients)
 {
@@ -368,12 +396,12 @@ void findLine(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoefficients
 }
 
 // This function sets a sphere marker to the given point.
-void setPointMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ input_point)
+void setSphereMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ input_point, std::string input_namespace, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
 {
     input_marker->header.frame_id = "depth_camera_link";
     input_marker->header.stamp = ros::Time::now();
     input_marker->type = visualization_msgs::Marker::SPHERE;
-    input_marker->ns = "z_max";
+    input_marker->ns = input_namespace;
     input_marker->id = 0;
     input_marker->action = visualization_msgs::Marker::ADD;
 
@@ -392,10 +420,10 @@ void setPointMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ i
     input_marker->scale.z = 0.01;
   
     // Set the color of the marker
-    input_marker->color.r = 1.0f;
-    input_marker->color.g = 0.0f;
-    input_marker->color.b = 0.0f;
-    input_marker->color.a = 1.0;
+    input_marker->color.r = input_color_r;
+    input_marker->color.g = input_color_g;
+    input_marker->color.b = input_color_b;
+    input_marker->color.a = input_color_a;
 
     input_marker->lifetime = ros::Duration();
 }
@@ -481,12 +509,12 @@ void setLineMarker(visualization_msgs::MarkerPtr& input_marker, pcl::ModelCoeffi
 }
 
 // This function sets a points marker to the given point indices.
-void setPointListMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointIndicesPtr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud)
+void setPointListMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointIndicesPtr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, std::string input_namespace)
 {    
     input_marker->header.frame_id = "depth_camera_link";
     input_marker->header.stamp = ros::Time::now();
     input_marker->type = visualization_msgs::Marker::POINTS;
-    input_marker->ns = "inliers";
+    input_marker->ns = input_namespace;
     input_marker->id = 0;
     input_marker->action = visualization_msgs::Marker::ADD;
 
@@ -527,15 +555,16 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     // create pcl pointcloud and convert sensor_msgs pointcloud2 to pcl pointcloud
     pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_ptr(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::fromROSMsg(sen_msg_pc2, *pcl_pc_ptr);
-    pcl::PointIndices::Ptr inliers_ptr (new pcl::PointIndices);
+
+    pcl::PointIndices::Ptr cylinder_inliers_ptr (new pcl::PointIndices);
+    pcl::PointIndices::Ptr circle_inliers_ptr (new pcl::PointIndices);
 
     pcl::ModelCoefficients::Ptr cylinder_coefficients_ptr (new pcl::ModelCoefficients);
-    pcl::ModelCoefficients::Ptr line_coefficients_ptr (new pcl::ModelCoefficients);
+    pcl::ModelCoefficients::Ptr circle_coefficients_ptr (new pcl::ModelCoefficients);
 
     // create a marker and pointer
-    visualization_msgs::MarkerPtr point_marker_ptr(new visualization_msgs::Marker);
+    visualization_msgs::MarkerPtr sphere_marker_ptr(new visualization_msgs::Marker);
     visualization_msgs::MarkerPtr cylinder_marker_ptr(new visualization_msgs::Marker);
-    visualization_msgs::MarkerPtr line_marker_ptr(new visualization_msgs::Marker);
     visualization_msgs::MarkerPtr points_marker_ptr(new visualization_msgs::Marker);
 
     ROS_INFO_STREAM("Seq. Nr.: " << pcl_pc_ptr->header.seq);
@@ -553,24 +582,23 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     // mirror pointcloud
     //mirrorPointcloudZ(pcl_pc_ptr);
 
-    // setup marker
-    //setPointMarker(point_marker_ptr, getPointMaxZ(pcl_pc_ptr));
+    
 
-    // find cylinder
-    findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, inliers_ptr);
-
-    // find line
-    //findLine(pcl_pc_ptr,line_coefficients_ptr);
-
-    setPointListMarker(points_marker_ptr, inliers_ptr, pcl_pc_ptr);
-
+    // find cylinder and publish marker
+    findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
     setCylinderMarker(cylinder_marker_ptr, *cylinder_coefficients_ptr);
-    //setLineMarker(line_marker_ptr, *line_coefficients_ptr);
-
-    // publish marker to "visualization_marker" topic
-    pub_marker.publish(points_marker_ptr);
     pub_marker.publish(cylinder_marker_ptr);
-    //pub_marker.publish(line_marker_ptr);
+
+    // publish sphere marker at cylinder z max
+    setSphereMarker(sphere_marker_ptr, getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr), "z_max_cylinder", 1.0, 0.0, 0.0, 1.0);
+    pub_marker.publish(sphere_marker_ptr);
+
+    setPointListMarker(points_marker_ptr, cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers");
+    pub_marker.publish(points_marker_ptr);
+
+    // setup marker at z max
+    setSphereMarker(sphere_marker_ptr, getPointMaxZ(pcl_pc_ptr), "z_max_all", 0.5, 0.0, 0.5, 1.0);
+    pub_marker.publish(sphere_marker_ptr);
 
     // publish pointcloud to "pclEdit" topic
     pub_pointcloud.publish(*pcl_pc_ptr);
