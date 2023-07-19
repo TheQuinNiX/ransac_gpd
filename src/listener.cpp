@@ -11,6 +11,7 @@
 #include "pcl/filters/passthrough.h"
 #include "time.h"
 #include "pcl/filters/extract_indices.h"
+#include "pcl/common/centroid.h"
 
 ros::Publisher pub_pointcloud;
 ros::Publisher pub_marker;
@@ -303,7 +304,7 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setNormalDistanceWeight (0.2);
-    seg.setMaxIterations (50000);
+    seg.setMaxIterations (30000);
     seg.setDistanceThreshold(0.009);
     seg.setRadiusLimits(0.001, 0.015);
     //seg.setAxis(axis);
@@ -454,7 +455,7 @@ void setCylinderMarker(visualization_msgs::MarkerPtr& input_marker, pcl::ModelCo
     // Set the scale of the marker
     input_marker->scale.x = input_coefficients.values.at(6)*2;
     input_marker->scale.y = input_coefficients.values.at(6)*2;
-    input_marker->scale.z = 10.0;
+    input_marker->scale.z = 20.0;
   
     // Set the color of the marker
     input_marker->color.r = 1.0f;
@@ -509,7 +510,7 @@ void setLineMarker(visualization_msgs::MarkerPtr& input_marker, pcl::ModelCoeffi
 }
 
 // This function sets a points marker to the given point indices.
-void setPointListMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointIndicesPtr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, std::string input_namespace)
+void setPointListMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointIndicesPtr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, std::string input_namespace, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
 {    
     input_marker->header.frame_id = "depth_camera_link";
     input_marker->header.stamp = ros::Time::now();
@@ -537,12 +538,83 @@ void setPointListMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointI
     input_marker->scale.z = 0.003;
   
     // Set the color of the marker
-    input_marker->color.r = 0.0f;
-    input_marker->color.g = 0.0f;
-    input_marker->color.b = 1.0f;
-    input_marker->color.a = 1.0;
+    input_marker->color.r = input_color_r;
+    input_marker->color.g = input_color_g;
+    input_marker->color.b = input_color_b;
+    input_marker->color.a = input_color_a;
 
     input_marker->lifetime = ros::Duration();
+}
+
+pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ searchPoint)
+{
+    pcl::PointIndices::Ptr point_neighbors_indices_ptr (new pcl::PointIndices);
+
+    if (input_pointcloud->size() > 0)
+    {
+        pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+        kdtree.setInputCloud(input_pointcloud);
+        
+        std::vector<int> point_indices_radius_search;
+        std::vector<float> point_radius_squared_distance;
+        
+        //float radius = 0.0001f * rand () / (RAND_MAX + 1.0f);
+        float radius = 0.0000001f;
+
+        if (kdtree.radiusSearch (searchPoint, radius, point_indices_radius_search, point_radius_squared_distance) > 0)
+        {
+            for (int i = 0; i < point_indices_radius_search.size(); i++)
+            {
+                point_neighbors_indices_ptr->indices.push_back(point_indices_radius_search[i]);
+            }
+        }
+    }
+
+    return point_neighbors_indices_ptr;
+}
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr getNewPcFromIndices(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud, pcl::PointIndices::Ptr &input_indices)
+{
+    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_pointcloud (new pcl::PointCloud<pcl::PointXYZ>);
+
+    pcl::ExtractIndices<pcl::PointXYZ> extr_indices_filter;
+    extr_indices_filter.setInputCloud(input_pointcloud);
+    extr_indices_filter.setIndices(input_indices);
+    extr_indices_filter.setNegative(false);
+    extr_indices_filter.filter(*filtered_pointcloud);
+
+    return filtered_pointcloud;
+}
+
+pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud)
+{
+    // Create and accumulate points
+    pcl::CentroidPoint<pcl::PointXYZ> centroid;
+
+    for (int i = 0; i < input_pointcloud->size(); i++)
+    {
+        centroid.add(input_pointcloud->at(i));
+    }
+
+    pcl::PointXYZ point_centroid;
+    centroid.get(point_centroid);
+
+    return point_centroid;
+}
+pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud, pcl::PointIndices::Ptr &input_indices)
+{
+    // Create and accumulate points
+    pcl::CentroidPoint<pcl::PointXYZ> centroid;
+
+    for (int i = 0; i < input_indices->indices.size(); i++)
+    {
+        centroid.add(input_pointcloud->at(input_indices->indices.at(i)));
+    }
+
+    pcl::PointXYZ point_centroid;
+    centroid.get(point_centroid);
+
+    return point_centroid;
 }
 
 void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
@@ -554,10 +626,12 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
 
     // create pcl pointcloud and convert sensor_msgs pointcloud2 to pcl pointcloud
     pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_ptr(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_filtered_ptr;
     pcl::fromROSMsg(sen_msg_pc2, *pcl_pc_ptr);
 
     pcl::PointIndices::Ptr cylinder_inliers_ptr (new pcl::PointIndices);
     pcl::PointIndices::Ptr circle_inliers_ptr (new pcl::PointIndices);
+    pcl::PointIndices::Ptr cylinder_max_z_neighbors_ptr (new pcl::PointIndices);
 
     pcl::ModelCoefficients::Ptr cylinder_coefficients_ptr (new pcl::ModelCoefficients);
     pcl::ModelCoefficients::Ptr circle_coefficients_ptr (new pcl::ModelCoefficients);
@@ -582,26 +656,45 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     // mirror pointcloud
     //mirrorPointcloudZ(pcl_pc_ptr);
 
-    
+    // publish pointcloud to "pclEdit" topic
+    pub_pointcloud.publish(*pcl_pc_ptr);
 
-    // find cylinder and publish marker
-    findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
-    setCylinderMarker(cylinder_marker_ptr, *cylinder_coefficients_ptr);
-    pub_marker.publish(cylinder_marker_ptr);
-
-    // publish sphere marker at cylinder z max
-    setSphereMarker(sphere_marker_ptr, getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr), "z_max_cylinder", 1.0, 0.0, 0.0, 1.0);
-    pub_marker.publish(sphere_marker_ptr);
-
-    setPointListMarker(points_marker_ptr, cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers");
-    pub_marker.publish(points_marker_ptr);
-
-    // setup marker at z max
+    // publish sphere marker at overall z max, color: purple
     setSphereMarker(sphere_marker_ptr, getPointMaxZ(pcl_pc_ptr), "z_max_all", 0.5, 0.0, 0.5, 1.0);
     pub_marker.publish(sphere_marker_ptr);
 
-    // publish pointcloud to "pclEdit" topic
-    pub_pointcloud.publish(*pcl_pc_ptr);
+    // find cylinder and publish markers
+    findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
+    if (!cylinder_inliers_ptr->indices.empty())
+    {
+        // publish cylinder marker
+        setCylinderMarker(cylinder_marker_ptr, *cylinder_coefficients_ptr);
+        pub_marker.publish(cylinder_marker_ptr);
+
+        // publish sphere marker at cylinder inliers z max, color: blue
+        setSphereMarker(sphere_marker_ptr, getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr), "z_max_cylinder", 0.0, 0.0, 1.0, 1.0);
+        pub_marker.publish(sphere_marker_ptr);
+
+        // publish points marker at cylinder inliers, color: blue
+        setPointListMarker(points_marker_ptr, cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers", 0.0, 0.0, 1.0, 1.0);
+        pub_marker.publish(points_marker_ptr);
+    }
+
+    // publish points marker at centroid overall points, color: green
+    setSphereMarker(sphere_marker_ptr, getCentroidPoint(pcl_pc_ptr), "centroid_all", 0.0, 1.0, 0.0, 1.0);
+    pub_marker.publish(sphere_marker_ptr);
+
+    //pcl_pc_filtered_ptr = getNewPcFromIndices(pcl_pc_ptr, cylinder_inliers_ptr);
+
+    //cylinder_max_z_neighbors_ptr = removeNotDirectPointNeighbors(pcl_pc_filtered_ptr, getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr));
+
+    // publish sphere marker at cylinder z max neighbors centroid, color: red
+    //setSphereMarker(sphere_marker_ptr, getCentroidPoint(pcl_pc_filtered_ptr, cylinder_max_z_neighbors_ptr), "centroid_cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
+    //pub_marker.publish(sphere_marker_ptr);
+
+    // publish points marker at cylinder z max neighbors, color: red
+    //setPointListMarker(points_marker_ptr, cylinder_max_z_neighbors_ptr, pcl_pc_filtered_ptr, "cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
+    //pub_marker.publish(points_marker_ptr);
 
     /* // stop timer and get result
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
