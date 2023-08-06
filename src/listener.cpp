@@ -276,7 +276,7 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     extr_inliers_filter.setNegative(true);
     extr_inliers_filter.filter(*input);
     */
-
+    
     pcl::PassThrough<pcl::PointXYZ> pass_filter;
     pass_filter.setInputCloud (input);
     pass_filter.setFilterFieldName ("z");
@@ -296,6 +296,7 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     ne.setKSearch(30);
     ne.setInputCloud(input);
     ne.setSearchMethod(tree);
+    ROS_INFO_STREAM("Calculate normals...");
     ne.compute(*cloud_normals_ptr);
 
     // create RandomSampleConsensus object and compute the appropriated model
@@ -303,15 +304,18 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setNormalDistanceWeight (0.2);
+    seg.setNormalDistanceWeight (0.01);
     seg.setMaxIterations (30000);
-    seg.setDistanceThreshold(0.009);
-    seg.setRadiusLimits(0.001, 0.015);
+    seg.setDistanceThreshold(0.003);
+    seg.setRadiusLimits(0.002, 0.012);
+    //seg.setRadiusLimits(0.0002, 0.0008);
+    //seg.setRadiusLimits(0.02, 0.04);
     //seg.setAxis(axis);
     //seg.setEpsAngle(10.0f * (M_PI/180.0f));
     seg.setInputCloud(input);
     seg.setInputNormals(cloud_normals_ptr);
     seg.setNumberOfThreads(8);
+    ROS_INFO_STREAM("Calculate cylinder...");
     seg.segment(*output_point_indicies, *output_coefficients);
 
     ROS_INFO_STREAM("Cylinder coefficients (x, y, z, ax, ay, az): ");
@@ -321,229 +325,182 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     }
     
     ROS_INFO_STREAM("Cylinder inliers: " << output_point_indicies->indices.size());
-
-    /*
-    pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
-    extr_inliers_filter.setInputCloud(input);
-    extr_inliers_filter.setIndices(inliers);
-    extr_inliers_filter.setNegative(false);
-    extr_inliers_filter.filter(*input);
-    */
-}
-
-// This function uses RANSAC to fit a circle in to the given pointcloud.
-void findCircle(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoefficients::Ptr& output_coefficients, pcl::PointIndices::Ptr& output_point_indicies)
-{
-    Eigen::Vector3f axis = Eigen::Vector3f(1.0,0.0,0.0);
-
-    // create RandomSampleConsensus object and compute the appropriated model
-    pcl::SACSegmentation<pcl::PointXYZ> seg (true);
-    seg.setOptimizeCoefficients(true);
-    seg.setModelType(pcl::SACMODEL_CIRCLE3D);
-    seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setMaxIterations (50000);
-    seg.setDistanceThreshold(0.009);
-    seg.setRadiusLimits(0.001, 0.015);
-    seg.setAxis(axis);
-    seg.setEpsAngle(10.0f * (M_PI/180.0f));
-    seg.setInputCloud(input);
-    seg.setNumberOfThreads(8);
-    seg.segment(*output_point_indicies, *output_coefficients);
-
-    /*
-    pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
-    extr_inliers_filter.setInputCloud(input);
-    extr_inliers_filter.setIndices(inliers);
-    extr_inliers_filter.setNegative(false);
-    extr_inliers_filter.filter(*input);
-    */
-}
-
-// This function uses RANSAC to fit a line in to the given pointcloud.
-void findLine(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoefficients::Ptr& output_coefficients)
-{
-    pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
-    Eigen::Vector3f axis = Eigen::Vector3f(1.0,0.0,0.0);
-
-    // create RandomSampleConsensus object and compute the appropriated model
-    pcl::SACSegmentation<pcl::PointXYZ> seg;
-    seg.setOptimizeCoefficients(true);
-    seg.setModelType(pcl::SACMODEL_LINE);
-    seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setMaxIterations (100000);
-    seg.setDistanceThreshold(0.001);
-    //seg.setRadiusLimits(0.002, 0.003);
-    //seg.setAxis(axis);
-    //seg.setEpsAngle(10.0f * (M_PI/180.0f));
-    seg.setInputCloud(input);
-    seg.setNumberOfThreads(8);
-    seg.segment(*inliers, *output_coefficients);
-
-    ROS_INFO_STREAM("Line coefficients (x, y, z, ax, ay, az): ");
-    for (int i = 0; i < 6; i++)
-    {
-        ROS_INFO_STREAM(i+1 << " = " << output_coefficients->values.at(i));
-    }
-    
-    //ROS_INFO_STREAM("Cylinder inliers: " << inliers->indices.size());
-
-    /*
-    pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
-    extr_inliers_filter.setInputCloud(input);
-    extr_inliers_filter.setIndices(inliers);
-    extr_inliers_filter.setNegative(false);
-    extr_inliers_filter.filter(*input);
-    */
 }
 
 // This function sets a sphere marker to the given point.
-void setSphereMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointXYZ input_point, std::string input_namespace, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
+void setSphereMarker(pcl::PointXYZ input_point, std::string input_namespace, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
 {
-    input_marker->header.frame_id = "depth_camera_link";
-    input_marker->header.stamp = ros::Time::now();
-    input_marker->type = visualization_msgs::Marker::SPHERE;
-    input_marker->ns = input_namespace;
-    input_marker->id = 0;
-    input_marker->action = visualization_msgs::Marker::ADD;
+    visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
+
+    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.stamp = ros::Time::now();
+    marker_ptr->type = visualization_msgs::Marker::SPHERE;
+    marker_ptr->ns = input_namespace;
+    marker_ptr->id = 0;
+    marker_ptr->action = visualization_msgs::Marker::ADD;
 
     // Set the position and orientation of the marker
-    input_marker->pose.position.x = input_point.x;
-    input_marker->pose.position.y = input_point.y;
-    input_marker->pose.position.z = input_point.z;
-    input_marker->pose.orientation.x = 0.0;
-    input_marker->pose.orientation.y = 0.0;
-    input_marker->pose.orientation.z = 0.0;
-    input_marker->pose.orientation.w = 1.0;
+    marker_ptr->pose.position.x = input_point.x;
+    marker_ptr->pose.position.y = input_point.y;
+    marker_ptr->pose.position.z = input_point.z;
+    marker_ptr->pose.orientation.x = 0.0;
+    marker_ptr->pose.orientation.y = 0.0;
+    marker_ptr->pose.orientation.z = 0.0;
+    marker_ptr->pose.orientation.w = 1.0;
   
     // Set the scale of the marker
-    input_marker->scale.x = 0.01;
-    input_marker->scale.y = 0.01;
-    input_marker->scale.z = 0.01;
+    marker_ptr->scale.x = 0.005;
+    marker_ptr->scale.y = 0.005;
+    marker_ptr->scale.z = 0.005;
   
     // Set the color of the marker
-    input_marker->color.r = input_color_r;
-    input_marker->color.g = input_color_g;
-    input_marker->color.b = input_color_b;
-    input_marker->color.a = input_color_a;
+    marker_ptr->color.r = input_color_r;
+    marker_ptr->color.g = input_color_g;
+    marker_ptr->color.b = input_color_b;
+    marker_ptr->color.a = input_color_a;
 
-    input_marker->lifetime = ros::Duration();
+    marker_ptr->lifetime = ros::Duration();
+
+    pub_marker.publish(marker_ptr);
+}
+
+// This function removes the sphere marker.
+void removeSphereMarker(std::string input_namespace)
+{
+    visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
+
+    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.stamp = ros::Time::now();
+    marker_ptr->type = visualization_msgs::Marker::SPHERE;
+    marker_ptr->ns = input_namespace;
+    marker_ptr->id = 0;
+    marker_ptr->action = visualization_msgs::Marker::DELETEALL;
+
+    pub_marker.publish(marker_ptr);
 }
 
 // This function sets a cylinder marker to the given coefficients.
-void setCylinderMarker(visualization_msgs::MarkerPtr& input_marker, pcl::ModelCoefficients& input_coefficients)
+void setCylinderMarker(pcl::ModelCoefficients::Ptr& input_coefficients)
 {    
+    visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
+
     Eigen::Quaternionf quaternion_from_coefficients;
 
-    quaternion_from_coefficients = obtainCylinderOrientationFromModel(input_coefficients);
+    quaternion_from_coefficients = obtainCylinderOrientationFromModel(*input_coefficients);
 
-    input_marker->header.frame_id = "depth_camera_link";
-    input_marker->header.stamp = ros::Time::now();
-    input_marker->type = visualization_msgs::Marker::CYLINDER;
-    input_marker->ns = "cylinder";
-    input_marker->id = 0;
-    input_marker->action = visualization_msgs::Marker::ADD;
+    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.stamp = ros::Time::now();
+    marker_ptr->type = visualization_msgs::Marker::CYLINDER;
+    marker_ptr->ns = "cylinder";
+    marker_ptr->id = 0;
+    marker_ptr->action = visualization_msgs::Marker::ADD;
 
     // Set the position and orientation of the marker
-    input_marker->pose.position.x = input_coefficients.values.at(0);
-    input_marker->pose.position.y = input_coefficients.values.at(1);
-    input_marker->pose.position.z = input_coefficients.values.at(2);
-    input_marker->pose.orientation.x = quaternion_from_coefficients.x();
-    input_marker->pose.orientation.y = quaternion_from_coefficients.y();
-    input_marker->pose.orientation.z = quaternion_from_coefficients.z();
-    input_marker->pose.orientation.w = quaternion_from_coefficients.w();
+    marker_ptr->pose.position.x = input_coefficients->values.at(0);
+    marker_ptr->pose.position.y = input_coefficients->values.at(1);
+    marker_ptr->pose.position.z = input_coefficients->values.at(2);
+    marker_ptr->pose.orientation.x = quaternion_from_coefficients.x();
+    marker_ptr->pose.orientation.y = quaternion_from_coefficients.y();
+    marker_ptr->pose.orientation.z = quaternion_from_coefficients.z();
+    marker_ptr->pose.orientation.w = quaternion_from_coefficients.w();
   
     // Set the scale of the marker
-    input_marker->scale.x = input_coefficients.values.at(6)*2;
-    input_marker->scale.y = input_coefficients.values.at(6)*2;
-    input_marker->scale.z = 20.0;
+    marker_ptr->scale.x = input_coefficients->values.at(6)*2;
+    marker_ptr->scale.y = input_coefficients->values.at(6)*2;
+    marker_ptr->scale.z = 20.0;
   
     // Set the color of the marker
-    input_marker->color.r = 1.0f;
-    input_marker->color.g = 1.0f;
-    input_marker->color.b = 1.0f;
-    input_marker->color.a = 0.6;
+    marker_ptr->color.r = 1.0f;
+    marker_ptr->color.g = 1.0f;
+    marker_ptr->color.b = 1.0f;
+    marker_ptr->color.a = 0.6;
 
-    input_marker->lifetime = ros::Duration();
+    marker_ptr->lifetime = ros::Duration();
+
+    pub_marker.publish(marker_ptr);
 }
 
-// This function sets a line marker to the given coefficients.
-void setLineMarker(visualization_msgs::MarkerPtr& input_marker, pcl::ModelCoefficients& input_coefficients)
-{    
-    // Convert axis vector to quarternion format
-    double axis_roll = atan2(input_coefficients.values[5],input_coefficients.values[4]);
-    double axis_pitch = -1.0 * atan2(input_coefficients.values[5],input_coefficients.values[3]);
-    double axis_yaw = atan2(input_coefficients.values[4],input_coefficients.values[3]);
+// This function removes the existing cylinder marker.
+void removeCylinderMarker()
+{
+    visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
-    tf2::Quaternion axis_quarternion;
-    axis_quarternion.setRPY( 0.0, -0.5*M_PI + axis_pitch, axis_yaw);
-    //axis_quarternion.setRPY( axis_roll, axis_pitch, axis_yaw);
-    axis_quarternion.normalize();
+    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.stamp = ros::Time::now();
+    marker_ptr->type = visualization_msgs::Marker::CYLINDER;
+    marker_ptr->ns = "cylinder";
+    marker_ptr->id = 0;
+    marker_ptr->action = visualization_msgs::Marker::DELETEALL;
 
-    input_marker->header.frame_id = "depth_camera_link";
-    input_marker->header.stamp = ros::Time::now();
-    input_marker->type = visualization_msgs::Marker::CYLINDER;
-    input_marker->ns = "cylinder";
-    input_marker->id = 0;
-    input_marker->action = visualization_msgs::Marker::ADD;
-
-    // Set the position and orientation of the marker
-    input_marker->pose.position.x = input_coefficients.values.at(0);
-    input_marker->pose.position.y = input_coefficients.values.at(1);
-    input_marker->pose.position.z = input_coefficients.values.at(2);
-    input_marker->pose.orientation.x = axis_quarternion.getX();
-    input_marker->pose.orientation.y = axis_quarternion.getY();
-    input_marker->pose.orientation.z = axis_quarternion.getZ();
-    input_marker->pose.orientation.w = axis_quarternion.getW();
-  
-    // Set the scale of the marker
-    input_marker->scale.x = 0.01;
-    input_marker->scale.y = 0.01;
-    input_marker->scale.z = 10.0;
-  
-    // Set the color of the marker
-    input_marker->color.r = 1.0f;
-    input_marker->color.g = 1.0f;
-    input_marker->color.b = 1.0f;
-    input_marker->color.a = 0.8;
-
-    input_marker->lifetime = ros::Duration();
+    pub_marker.publish(marker_ptr);
 }
 
 // This function sets a points marker to the given point indices.
-void setPointListMarker(visualization_msgs::MarkerPtr& input_marker, pcl::PointIndicesPtr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, std::string input_namespace, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
+void setPointListMarker(pcl::PointIndices::Ptr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, std::string input_namespace, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
 {    
-    input_marker->header.frame_id = "depth_camera_link";
-    input_marker->header.stamp = ros::Time::now();
-    input_marker->type = visualization_msgs::Marker::POINTS;
-    input_marker->ns = input_namespace;
-    input_marker->id = 0;
-    input_marker->action = visualization_msgs::Marker::ADD;
+    visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
+
+    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.stamp = ros::Time::now();
+    marker_ptr->type = visualization_msgs::Marker::POINTS;
+    marker_ptr->ns = input_namespace;
+    marker_ptr->id = 0;
+    marker_ptr->action = visualization_msgs::Marker::ADD;
 
     int input_point_indices_size = input_point_indices->indices.size();
 
-    for (int i = 0; i < input_point_indices->indices.size(); i++)
+    for (int i = 0; i < input_point_indices_size; i++)
     {
         geometry_msgs::Point p;
 
         p.x = input_pointcloud->at(input_point_indices->indices.at(i)).x;
         p.y = input_pointcloud->at(input_point_indices->indices.at(i)).y;
         p.z = input_pointcloud->at(input_point_indices->indices.at(i)).z;
-
-        input_marker->points.push_back(p);
+        //ROS_INFO_STREAM("Inlier: " << i+1 << " - " << "x: " << p.x << " ,y: " << p.y << " ,z: " << p.z);
+        marker_ptr->points.push_back(p);
     }
   
     // Set the scale of the marker
-    input_marker->scale.x = 0.003;
-    input_marker->scale.y = 0.003;
-    input_marker->scale.z = 0.003;
+    marker_ptr->scale.x = 0.003;
+    marker_ptr->scale.y = 0.003;
+    marker_ptr->scale.z = 0.003;
   
     // Set the color of the marker
-    input_marker->color.r = input_color_r;
-    input_marker->color.g = input_color_g;
-    input_marker->color.b = input_color_b;
-    input_marker->color.a = input_color_a;
+    marker_ptr->color.r = input_color_r;
+    marker_ptr->color.g = input_color_g;
+    marker_ptr->color.b = input_color_b;
+    marker_ptr->color.a = input_color_a;
 
-    input_marker->lifetime = ros::Duration();
+    marker_ptr->lifetime = ros::Duration();
+
+    pub_marker.publish(marker_ptr);
+}
+
+// This function removes the existing points marker.
+void removePointListMarker(std::string input_namespace)
+{    
+    visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
+
+    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.stamp = ros::Time::now();
+    marker_ptr->type = visualization_msgs::Marker::POINTS;
+    marker_ptr->ns = input_namespace;
+    marker_ptr->id = 0;
+    marker_ptr->action = visualization_msgs::Marker::DELETEALL;
+
+    pub_marker.publish(marker_ptr);
+}
+
+void removeAllMarkers()
+{
+    removeCylinderMarker();
+    removePointListMarker("cylinder_inliers");
+    removeSphereMarker("z_max_all");
+    removeSphereMarker("z_max_cylinder");
+    removeSphereMarker("centroid_all");
+    removeSphereMarker("centroid_cylinder_neighbors");
+    removeSphereMarker("centroid_cylinder_inliers");
+    removePointListMarker("cylinder_neighbors");
 }
 
 pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ searchPoint)
@@ -630,16 +587,11 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     pcl::fromROSMsg(sen_msg_pc2, *pcl_pc_ptr);
 
     pcl::PointIndices::Ptr cylinder_inliers_ptr (new pcl::PointIndices);
-    pcl::PointIndices::Ptr circle_inliers_ptr (new pcl::PointIndices);
     pcl::PointIndices::Ptr cylinder_max_z_neighbors_ptr (new pcl::PointIndices);
 
     pcl::ModelCoefficients::Ptr cylinder_coefficients_ptr (new pcl::ModelCoefficients);
-    pcl::ModelCoefficients::Ptr circle_coefficients_ptr (new pcl::ModelCoefficients);
 
-    // create a marker and pointer
-    visualization_msgs::MarkerPtr sphere_marker_ptr(new visualization_msgs::Marker);
-    visualization_msgs::MarkerPtr cylinder_marker_ptr(new visualization_msgs::Marker);
-    visualization_msgs::MarkerPtr points_marker_ptr(new visualization_msgs::Marker);
+    removeAllMarkers();
 
     ROS_INFO_STREAM("Seq. Nr.: " << pcl_pc_ptr->header.seq);
 
@@ -660,41 +612,38 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     pub_pointcloud.publish(*pcl_pc_ptr);
 
     // publish sphere marker at overall z max, color: purple
-    setSphereMarker(sphere_marker_ptr, getPointMaxZ(pcl_pc_ptr), "z_max_all", 0.5, 0.0, 0.5, 1.0);
-    pub_marker.publish(sphere_marker_ptr);
+    setSphereMarker(getPointMaxZ(pcl_pc_ptr), "z_max_all", 0.5, 0.0, 0.5, 1.0);
+
+    // publish points marker at centroid overall points, color: green
+    setSphereMarker(getCentroidPoint(pcl_pc_ptr), "centroid_all", 0.0, 1.0, 0.0, 1.0);
 
     // find cylinder and publish markers
     findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
-    if (!cylinder_inliers_ptr->indices.empty())
+    
+    if (cylinder_inliers_ptr->indices.size() > 0)
     {
         // publish cylinder marker
-        setCylinderMarker(cylinder_marker_ptr, *cylinder_coefficients_ptr);
-        pub_marker.publish(cylinder_marker_ptr);
-
-        // publish sphere marker at cylinder inliers z max, color: blue
-        setSphereMarker(sphere_marker_ptr, getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr), "z_max_cylinder", 0.0, 0.0, 1.0, 1.0);
-        pub_marker.publish(sphere_marker_ptr);
+        setCylinderMarker(cylinder_coefficients_ptr);
 
         // publish points marker at cylinder inliers, color: blue
-        setPointListMarker(points_marker_ptr, cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers", 0.0, 0.0, 1.0, 1.0);
-        pub_marker.publish(points_marker_ptr);
-    }
+        setPointListMarker(cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers", 0.0, 0.0, 1.0, 1.0);
 
-    // publish points marker at centroid overall points, color: green
-    setSphereMarker(sphere_marker_ptr, getCentroidPoint(pcl_pc_ptr), "centroid_all", 0.0, 1.0, 0.0, 1.0);
-    pub_marker.publish(sphere_marker_ptr);
+        // publish sphere marker at cylinder inliers z max, color: blue
+        setSphereMarker(getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr), "z_max_cylinder", 0.0, 0.0, 1.0, 1.0);
+
+        // publish sphere marker at cylinder inliers centroid color: orange
+        setSphereMarker(getCentroidPoint(pcl_pc_ptr, cylinder_inliers_ptr), "centroid_cylinder_inliers", 1.0, 0.0, 0.0, 1.0);
+    }
 
     //pcl_pc_filtered_ptr = getNewPcFromIndices(pcl_pc_ptr, cylinder_inliers_ptr);
 
     //cylinder_max_z_neighbors_ptr = removeNotDirectPointNeighbors(pcl_pc_filtered_ptr, getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr));
 
     // publish sphere marker at cylinder z max neighbors centroid, color: red
-    //setSphereMarker(sphere_marker_ptr, getCentroidPoint(pcl_pc_filtered_ptr, cylinder_max_z_neighbors_ptr), "centroid_cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
-    //pub_marker.publish(sphere_marker_ptr);
+    //setSphereMarker(getCentroidPoint(pcl_pc_filtered_ptr, cylinder_max_z_neighbors_ptr), "centroid_cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
 
     // publish points marker at cylinder z max neighbors, color: red
-    //setPointListMarker(points_marker_ptr, cylinder_max_z_neighbors_ptr, pcl_pc_filtered_ptr, "cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
-    //pub_marker.publish(points_marker_ptr);
+    //setPointListMarker(cylinder_max_z_neighbors_ptr, pcl_pc_filtered_ptr, "cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
 
     /* // stop timer and get result
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end);
@@ -713,12 +662,28 @@ int main(int argc, char **argv)
     
     ros::init(argc, argv, "listener");
     ros::NodeHandle n;
+
+    //tf2_ros::Buffer tfBuffer;
+    //tf2_ros::TransformListener tfListener(tfBuffer);
+
     pub_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pclEdit", 1);
     pub_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
     ros::Subscriber sub = n.subscribe("depth/points", 10, dpCallback);
     ros::Rate loop_rate(1);
 
     while (ros::ok()) {
+        /*
+        geometry_msgs::TransformStamped transformStamped;
+        try{
+            transformStamped = tfBuffer.lookupTransform("table_link", "depth_camera_link", ros::Time(0));
+        }
+        catch (tf2::TransformException &ex) {
+            ROS_WARN("%s",ex.what());
+            ros::Duration(1.0).sleep();
+            continue;
+        }
+        */
+
         ros::spinOnce();
         loop_rate.sleep();
     }
