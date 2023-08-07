@@ -12,9 +12,14 @@
 #include "time.h"
 #include "pcl/filters/extract_indices.h"
 #include "pcl/common/centroid.h"
+#include "pcl/visualization/pcl_visualizer.h"
+#include "pcl/filters/crop_box.h"
 
 ros::Publisher pub_pointcloud;
+ros::Publisher pub_pointcloud_debug;
 ros::Publisher pub_marker;
+
+tf2_ros::Buffer tfBuffer;
 
 // This function checks a point for NaN value. If Point value is NaN the function returns 1, otherwise 0.
 bool checkPointNaN(pcl::PointXYZ& input)
@@ -265,7 +270,7 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(0.004);
+    seg.setDistanceThreshold(0.001);
     seg.setInputCloud(input);
     seg.segment(*inliers, *coefficients_ptr);
     
@@ -278,11 +283,21 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     */
     
     pcl::PassThrough<pcl::PointXYZ> pass_filter;
-    pass_filter.setInputCloud (input);
-    pass_filter.setFilterFieldName ("z");
-    pass_filter.setFilterLimits (getPointMaxZ(input, inliers).z, 1.0);
-    pass_filter.setNegative (false);
-    pass_filter.filter (*input);
+    pass_filter.setInputCloud(input);
+    pass_filter.setFilterFieldName("z");
+    pass_filter.setFilterLimits(getPointMaxZ(input, inliers).z, 1.0);
+    pass_filter.setNegative(false);
+    pass_filter.filter(*input);
+}
+
+void addCropBox(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
+{
+    pcl::CropBox<pcl::PointXYZ> crop_box_filter;
+    crop_box_filter.setInputCloud(input);
+    crop_box_filter.setNegative(false);
+    crop_box_filter.setMin(Eigen::Vector4f(minX, minY, minZ, 1.0));
+    crop_box_filter.setMax(Eigen::Vector4f(maxX, maxY, maxZ, 1.0));
+    crop_box_filter.filter(*input);
 }
 
 // This function uses RANSAC to fit a cylinder in to the given pointcloud.
@@ -304,7 +319,7 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setNormalDistanceWeight (0.01);
+    seg.setNormalDistanceWeight (0.02);
     seg.setMaxIterations (30000);
     seg.setDistanceThreshold(0.003);
     seg.setRadiusLimits(0.002, 0.012);
@@ -332,7 +347,7 @@ void setSphereMarker(pcl::PointXYZ input_point, std::string input_namespace, flo
 {
     visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
-    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.frame_id = "mount_plate_link";
     marker_ptr->header.stamp = ros::Time::now();
     marker_ptr->type = visualization_msgs::Marker::SPHERE;
     marker_ptr->ns = input_namespace;
@@ -369,7 +384,7 @@ void removeSphereMarker(std::string input_namespace)
 {
     visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
-    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.frame_id = "mount_plate_link";
     marker_ptr->header.stamp = ros::Time::now();
     marker_ptr->type = visualization_msgs::Marker::SPHERE;
     marker_ptr->ns = input_namespace;
@@ -388,7 +403,7 @@ void setCylinderMarker(pcl::ModelCoefficients::Ptr& input_coefficients)
 
     quaternion_from_coefficients = obtainCylinderOrientationFromModel(*input_coefficients);
 
-    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.frame_id = "mount_plate_link";
     marker_ptr->header.stamp = ros::Time::now();
     marker_ptr->type = visualization_msgs::Marker::CYLINDER;
     marker_ptr->ns = "cylinder";
@@ -425,7 +440,7 @@ void removeCylinderMarker()
 {
     visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
-    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.frame_id = "mount_plate_link";
     marker_ptr->header.stamp = ros::Time::now();
     marker_ptr->type = visualization_msgs::Marker::CYLINDER;
     marker_ptr->ns = "cylinder";
@@ -440,7 +455,7 @@ void setPointListMarker(pcl::PointIndices::Ptr& input_point_indices, pcl::PointC
 {    
     visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
-    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.frame_id = "mount_plate_link";
     marker_ptr->header.stamp = ros::Time::now();
     marker_ptr->type = visualization_msgs::Marker::POINTS;
     marker_ptr->ns = input_namespace;
@@ -481,7 +496,7 @@ void removePointListMarker(std::string input_namespace)
 {    
     visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
-    marker_ptr->header.frame_id = "depth_camera_link";
+    marker_ptr->header.frame_id = "mount_plate_link";
     marker_ptr->header.stamp = ros::Time::now();
     marker_ptr->type = visualization_msgs::Marker::POINTS;
     marker_ptr->ns = input_namespace;
@@ -581,27 +596,41 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     //clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin);
     */
 
+    sensor_msgs::PointCloud2 sen_msg_pc2_tf;
+
+    pcl_ros::transformPointCloud("mount_plate_link", sen_msg_pc2, sen_msg_pc2_tf, tfBuffer);
+
+    if (sen_msg_pc2_tf.data.size() < 1)
+    {
+        return;
+    }
+
     // create pcl pointcloud and convert sensor_msgs pointcloud2 to pcl pointcloud
     pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_ptr(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_filtered_ptr;
-    pcl::fromROSMsg(sen_msg_pc2, *pcl_pc_ptr);
+    pcl::fromROSMsg(sen_msg_pc2_tf, *pcl_pc_ptr);
+
+    //DEBUG publish pointcloud to "pclEdit" topic
+    pub_pointcloud_debug.publish(*pcl_pc_ptr);
 
     pcl::PointIndices::Ptr cylinder_inliers_ptr (new pcl::PointIndices);
     pcl::PointIndices::Ptr cylinder_max_z_neighbors_ptr (new pcl::PointIndices);
 
     pcl::ModelCoefficients::Ptr cylinder_coefficients_ptr (new pcl::ModelCoefficients);
 
-    removeAllMarkers();
+    //removeAllMarkers();
 
     ROS_INFO_STREAM("Seq. Nr.: " << pcl_pc_ptr->header.seq);
 
     // fix tilted pointcloud
-    rectifyTilt(pcl_pc_ptr);
+    //rectifyTilt(pcl_pc_ptr);
 
-    moveUp(pcl_pc_ptr);
+    //moveUp(pcl_pc_ptr);
 
     // remove every point from the pointcloud representing the groundplane
     removeGroundPlane(pcl_pc_ptr);
+
+    addCropBox(pcl_pc_ptr, 0.25, 0.05, -1.0, 0.65, 0.4, 10.0);
 
     //moveDown(pcl_pc_ptr);
 
@@ -663,27 +692,16 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "listener");
     ros::NodeHandle n;
 
-    //tf2_ros::Buffer tfBuffer;
-    //tf2_ros::TransformListener tfListener(tfBuffer);
+    tf2_ros::TransformListener tfListener(tfBuffer);
 
     pub_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pclEdit", 1);
+    pub_pointcloud_debug = n.advertise<sensor_msgs::PointCloud2>("pclDebug", 1);
     pub_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
+
     ros::Subscriber sub = n.subscribe("depth/points", 10, dpCallback);
     ros::Rate loop_rate(1);
 
     while (ros::ok()) {
-        /*
-        geometry_msgs::TransformStamped transformStamped;
-        try{
-            transformStamped = tfBuffer.lookupTransform("table_link", "depth_camera_link", ros::Time(0));
-        }
-        catch (tf2::TransformException &ex) {
-            ROS_WARN("%s",ex.what());
-            ros::Duration(1.0).sleep();
-            continue;
-        }
-        */
-
         ros::spinOnce();
         loop_rate.sleep();
     }
