@@ -7,6 +7,12 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_ros
 )
 
+find_package(PCL 1.8 REQUIRED)
+
+generate_dynamic_reconfigure_options(
+  cfg/parameters.cfg
+)
+
 catkin_package(
 )
 include_directories(
@@ -14,4 +20,9 @@ include_directories(
 )
 
 add_executable(listener src/listener.cpp)
+add_executable(viewer src/viewer.cpp)
+
+add_dependencies(viewer ${PROJECT_NAME}_gencfg)
+
 target_link_libraries(listener ${catkin_LIBRARIES})
+target_link_libraries(viewer ${catkin_LIBRARIES} ${PCL_LIBRARIES})

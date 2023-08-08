@@ -12,14 +12,13 @@
 #include "time.h"
 #include "pcl/filters/extract_indices.h"
 #include "pcl/common/centroid.h"
-#include "pcl/visualization/pcl_visualizer.h"
 #include "pcl/filters/crop_box.h"
 
-ros::Publisher pub_pointcloud;
-ros::Publisher pub_pointcloud_debug;
-ros::Publisher pub_marker;
-
-tf2_ros::Buffer tfBuffer;
+ros::Publisher publisher_pointcloud;
+ros::Publisher publisher_pointcloud_normals;
+ros::Publisher publisher_pointcloud_debug;
+ros::Publisher publisher_vis_marker;
+tf2_ros::Buffer tf_buffer;
 
 // This function checks a point for NaN value. If Point value is NaN the function returns 1, otherwise 0.
 bool checkPointNaN(pcl::PointXYZ& input)
@@ -264,15 +263,15 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
 {
     // Ransac
     pcl::ModelCoefficients::Ptr coefficients_ptr (new pcl::ModelCoefficients);
-    pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
+    pcl::PointIndices::Ptr inliers_ptr (new pcl::PointIndices);
 
     // create RandomSampleConsensus object and compute the appropriated model
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(0.001);
+    seg.setDistanceThreshold(0.004);
     seg.setInputCloud(input);
-    seg.segment(*inliers, *coefficients_ptr);
+    seg.segment(*inliers_ptr, *coefficients_ptr);
     
     /*
     pcl::ExtractIndices<pcl::PointXYZ> extr_inliers_filter;
@@ -285,7 +284,7 @@ void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     pcl::PassThrough<pcl::PointXYZ> pass_filter;
     pass_filter.setInputCloud(input);
     pass_filter.setFilterFieldName("z");
-    pass_filter.setFilterLimits(getPointMaxZ(input, inliers).z, 1.0);
+    pass_filter.setFilterLimits(getPointMaxZ(input, inliers_ptr).z, 1.0);
     pass_filter.setNegative(false);
     pass_filter.filter(*input);
 }
@@ -314,12 +313,15 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     ROS_INFO_STREAM("Calculate normals...");
     ne.compute(*cloud_normals_ptr);
 
+    // publish pointcloud to "pclEditNormals" topic
+    publisher_pointcloud_normals.publish(*cloud_normals_ptr);
+
     // create RandomSampleConsensus object and compute the appropriated model
     pcl::SACSegmentationFromNormals<pcl::PointXYZ, pcl::Normal> seg (true);
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setNormalDistanceWeight (0.02);
+    seg.setNormalDistanceWeight (0.01);
     seg.setMaxIterations (30000);
     seg.setDistanceThreshold(0.003);
     seg.setRadiusLimits(0.002, 0.012);
@@ -376,7 +378,7 @@ void setSphereMarker(pcl::PointXYZ input_point, std::string input_namespace, flo
 
     marker_ptr->lifetime = ros::Duration();
 
-    pub_marker.publish(marker_ptr);
+    publisher_vis_marker.publish(marker_ptr);
 }
 
 // This function removes the sphere marker.
@@ -391,7 +393,7 @@ void removeSphereMarker(std::string input_namespace)
     marker_ptr->id = 0;
     marker_ptr->action = visualization_msgs::Marker::DELETEALL;
 
-    pub_marker.publish(marker_ptr);
+    publisher_vis_marker.publish(marker_ptr);
 }
 
 // This function sets a cylinder marker to the given coefficients.
@@ -432,7 +434,7 @@ void setCylinderMarker(pcl::ModelCoefficients::Ptr& input_coefficients)
 
     marker_ptr->lifetime = ros::Duration();
 
-    pub_marker.publish(marker_ptr);
+    publisher_vis_marker.publish(marker_ptr);
 }
 
 // This function removes the existing cylinder marker.
@@ -447,7 +449,7 @@ void removeCylinderMarker()
     marker_ptr->id = 0;
     marker_ptr->action = visualization_msgs::Marker::DELETEALL;
 
-    pub_marker.publish(marker_ptr);
+    publisher_vis_marker.publish(marker_ptr);
 }
 
 // This function sets a points marker to the given point indices.
@@ -488,7 +490,7 @@ void setPointListMarker(pcl::PointIndices::Ptr& input_point_indices, pcl::PointC
 
     marker_ptr->lifetime = ros::Duration();
 
-    pub_marker.publish(marker_ptr);
+    publisher_vis_marker.publish(marker_ptr);
 }
 
 // This function removes the existing points marker.
@@ -503,7 +505,7 @@ void removePointListMarker(std::string input_namespace)
     marker_ptr->id = 0;
     marker_ptr->action = visualization_msgs::Marker::DELETEALL;
 
-    pub_marker.publish(marker_ptr);
+    publisher_vis_marker.publish(marker_ptr);
 }
 
 void removeAllMarkers()
@@ -518,7 +520,7 @@ void removeAllMarkers()
     removePointListMarker("cylinder_neighbors");
 }
 
-pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ searchPoint)
+pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ search_point)
 {
     pcl::PointIndices::Ptr point_neighbors_indices_ptr (new pcl::PointIndices);
 
@@ -533,7 +535,7 @@ pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointX
         //float radius = 0.0001f * rand () / (RAND_MAX + 1.0f);
         float radius = 0.0000001f;
 
-        if (kdtree.radiusSearch (searchPoint, radius, point_indices_radius_search, point_radius_squared_distance) > 0)
+        if (kdtree.radiusSearch (search_point, radius, point_indices_radius_search, point_radius_squared_distance) > 0)
         {
             for (int i = 0; i < point_indices_radius_search.size(); i++)
             {
@@ -560,7 +562,6 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr getNewPcFromIndices(pcl::PointCloud<pcl::Poi
 
 pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud)
 {
-    // Create and accumulate points
     pcl::CentroidPoint<pcl::PointXYZ> centroid;
 
     for (int i = 0; i < input_pointcloud->size(); i++)
@@ -575,7 +576,6 @@ pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointc
 }
 pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud, pcl::PointIndices::Ptr &input_indices)
 {
-    // Create and accumulate points
     pcl::CentroidPoint<pcl::PointXYZ> centroid;
 
     for (int i = 0; i < input_indices->indices.size(); i++)
@@ -598,20 +598,20 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
 
     sensor_msgs::PointCloud2 sen_msg_pc2_tf;
 
-    pcl_ros::transformPointCloud("mount_plate_link", sen_msg_pc2, sen_msg_pc2_tf, tfBuffer);
+    //pcl_ros::transformPointCloud("mount_plate_link", sen_msg_pc2, sen_msg_pc2_tf, tfBuffer);
 
     if (sen_msg_pc2_tf.data.size() < 1)
     {
-        return;
+        //return;
     }
 
     // create pcl pointcloud and convert sensor_msgs pointcloud2 to pcl pointcloud
     pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_ptr(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_filtered_ptr;
-    pcl::fromROSMsg(sen_msg_pc2_tf, *pcl_pc_ptr);
+    pcl::fromROSMsg(sen_msg_pc2, *pcl_pc_ptr);
 
     //DEBUG publish pointcloud to "pclEdit" topic
-    pub_pointcloud_debug.publish(*pcl_pc_ptr);
+    publisher_pointcloud_debug.publish(*pcl_pc_ptr);
 
     pcl::PointIndices::Ptr cylinder_inliers_ptr (new pcl::PointIndices);
     pcl::PointIndices::Ptr cylinder_max_z_neighbors_ptr (new pcl::PointIndices);
@@ -623,22 +623,17 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
     ROS_INFO_STREAM("Seq. Nr.: " << pcl_pc_ptr->header.seq);
 
     // fix tilted pointcloud
-    //rectifyTilt(pcl_pc_ptr);
+    rectifyTilt(pcl_pc_ptr);
 
-    //moveUp(pcl_pc_ptr);
+    moveUp(pcl_pc_ptr);
 
     // remove every point from the pointcloud representing the groundplane
     removeGroundPlane(pcl_pc_ptr);
 
-    addCropBox(pcl_pc_ptr, 0.25, 0.05, -1.0, 0.65, 0.4, 10.0);
-
-    //moveDown(pcl_pc_ptr);
-
-    // mirror pointcloud
-    //mirrorPointcloudZ(pcl_pc_ptr);
+    //addCropBox(pcl_pc_ptr, 0.25, 0.05, -1.0, 0.65, 0.4, 10.0);
 
     // publish pointcloud to "pclEdit" topic
-    pub_pointcloud.publish(*pcl_pc_ptr);
+    publisher_pointcloud.publish(*pcl_pc_ptr);
 
     // publish sphere marker at overall z max, color: purple
     setSphereMarker(getPointMaxZ(pcl_pc_ptr), "z_max_all", 0.5, 0.0, 0.5, 1.0);
@@ -687,18 +682,19 @@ void dpCallback(const sensor_msgs::PointCloud2& sen_msg_pc2)
 
 int main(int argc, char **argv)
 {
-    ROS_INFO("Starting node");
+    ROS_INFO("Starting listener node...");
     
     ros::init(argc, argv, "listener");
     ros::NodeHandle n;
 
-    tf2_ros::TransformListener tfListener(tfBuffer);
+    tf2_ros::TransformListener tfListener(tf_buffer);
 
-    pub_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pclEdit", 1);
-    pub_pointcloud_debug = n.advertise<sensor_msgs::PointCloud2>("pclDebug", 1);
-    pub_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
+    publisher_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited", 1);
+    publisher_pointcloud_normals = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited_normals", 1);
+    publisher_pointcloud_debug = n.advertise<sensor_msgs::PointCloud2>("pointcloud_debug", 1);
+    publisher_vis_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
 
-    ros::Subscriber sub = n.subscribe("depth/points", 10, dpCallback);
+    ros::Subscriber subscriber_pointcloud = n.subscribe("depth/points", 10, dpCallback);
     ros::Rate loop_rate(1);
 
     while (ros::ok()) {
