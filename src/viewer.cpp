@@ -29,6 +29,7 @@ void normalsCallback(const pcl::PointCloud<pcl::Normal>::Ptr input_normals)
         viewer_ptr->removeAllPointClouds();
         viewer_ptr->addPointCloud<pcl::PointXYZ>(cloud_ptr, colorhandler, "cloud");
         viewer_ptr->addPointCloudNormals<pcl::PointXYZ, pcl::Normal> (cloud_ptr, input_normals, int_displayed_normals, double_length_normals, "normals");
+        viewer_ptr->setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "cloud");
     }
 }
 

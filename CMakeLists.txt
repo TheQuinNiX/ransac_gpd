@@ -23,6 +23,7 @@ add_executable(listener src/listener.cpp)
 add_executable(viewer src/viewer.cpp)
 
 add_dependencies(viewer ${PROJECT_NAME}_gencfg)
+add_dependencies(listener ${PROJECT_NAME}_gencfg)
 
 target_link_libraries(listener ${catkin_LIBRARIES})
 target_link_libraries(viewer ${catkin_LIBRARIES} ${PCL_LIBRARIES})

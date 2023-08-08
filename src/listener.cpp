@@ -13,12 +13,25 @@
 #include "pcl/filters/extract_indices.h"
 #include "pcl/common/centroid.h"
 #include "pcl/filters/crop_box.h"
+#include "dynamic_reconfigure/server.h"
+#include "ransac_gpd/parametersConfig.h"
 
 ros::Publisher publisher_pointcloud;
 ros::Publisher publisher_pointcloud_normals;
 ros::Publisher publisher_pointcloud_debug;
 ros::Publisher publisher_vis_marker;
 tf2_ros::Buffer tf_buffer;
+int int_setKSearch;
+double double_setNormalDistanceWeight;
+double double_setDistanceThreshold;
+
+void callback(ransac_gpd::parametersConfig &config, u_int32_t level)
+{
+    ROS_INFO("Parameters changed!");
+    int_setKSearch = config.int_setKSearch;
+    double_setNormalDistanceWeight = config.double_setNormalDistanceWeight;
+    double_setDistanceThreshold = config.double_setDistanceThreshold;
+}
 
 // This function checks a point for NaN value. If Point value is NaN the function returns 1, otherwise 0.
 bool checkPointNaN(pcl::PointXYZ& input)
@@ -307,7 +320,7 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> ne;
     //Eigen::Vector3f axis = Eigen::Vector3f(1.0,0.0,0.0);
     ne.setNumberOfThreads(8);
-    ne.setKSearch(30);
+    ne.setKSearch(int_setKSearch);
     ne.setInputCloud(input);
     ne.setSearchMethod(tree);
     ROS_INFO_STREAM("Calculate normals...");
@@ -321,9 +334,9 @@ void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoeffici
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setNormalDistanceWeight (0.01);
+    seg.setNormalDistanceWeight (double_setNormalDistanceWeight);
     seg.setMaxIterations (30000);
-    seg.setDistanceThreshold(0.003);
+    seg.setDistanceThreshold(double_setDistanceThreshold);
     seg.setRadiusLimits(0.002, 0.012);
     //seg.setRadiusLimits(0.0002, 0.0008);
     //seg.setRadiusLimits(0.02, 0.04);
@@ -686,6 +699,12 @@ int main(int argc, char **argv)
     
     ros::init(argc, argv, "listener");
     ros::NodeHandle n;
+
+    dynamic_reconfigure::Server<ransac_gpd::parametersConfig> server;
+    dynamic_reconfigure::Server<ransac_gpd::parametersConfig>::CallbackType f;
+
+    f = boost::bind(&callback, _1, _2);
+    server.setCallback(f);
 
     tf2_ros::TransformListener tfListener(tf_buffer);
 
