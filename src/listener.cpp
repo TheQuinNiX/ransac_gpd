@@ -35,13 +35,14 @@ protected:
     ros::Publisher publisher_pointcloud_debug;
     ros::Publisher publisher_vis_marker;
 
+    pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_ptr {new pcl::PointCloud<pcl::PointXYZ>};
+
+    // Dynamic reconfigure
     int int_setKSearch;
     double double_setNormalDistanceWeight;
     double double_setDistanceThreshold;
 
     tf2_ros::Buffer tf_buffer;
-
-    pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_ptr;
     
 public:
 
@@ -633,6 +634,11 @@ public:
         f = boost::bind(&get_grasping_pointAction::callbackDynamicReconfigure, this, _1, _2);
         server.setCallback(f);
 
+        publisher_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited", 1);
+        publisher_pointcloud_normals = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited_normals", 1);
+        publisher_vis_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
+        publisher_pointcloud_debug = n.advertise<sensor_msgs::PointCloud2>("pointcloud_debug", 1);
+
         tf2_ros::TransformListener tfListener(tf_buffer);
 
         as_.start();
@@ -645,43 +651,39 @@ public:
 
     void callbackAction(const ransac_gpd::get_grasping_pointGoalConstPtr &goal)
     {
-        publisher_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited", 1);
-        publisher_pointcloud_normals = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited_normals", 1);
-        publisher_vis_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
-        publisher_pointcloud_debug = n.advertise<sensor_msgs::PointCloud2>("pointcloud_debug", 1);
-        
+        pcl::PointCloud<pcl::PointXYZ> pcl_pc;
+        pcl::PointIndices::Ptr cylinder_inliers_ptr (new pcl::PointIndices);
+        pcl::PointIndices::Ptr cylinder_max_z_neighbors_ptr (new pcl::PointIndices);
+        pcl::ModelCoefficients::Ptr cylinder_coefficients_ptr (new pcl::ModelCoefficients);
+        pcl::PointXYZ maxZCylinder;
+        geometry_msgs::PoseStamped pose_result;
+        Eigen::Quaternionf quaternion_cylinder;
         sensor_msgs::PointCloud2 pc;
-        sensor_msgs::PointCloud2ConstPtr msg = ros::topic::waitForMessage<sensor_msgs::PointCloud2>("depth/points", ros::Duration(10));
+        sensor_msgs::PointCloud2ConstPtr msg = ros::topic::waitForMessage<sensor_msgs::PointCloud2>("/depth/points", ros::Duration(2));
         
         if(msg == NULL)
         {
-            ROS_INFO("No point clound messages received");
+            ROS_INFO("No point clound message received");
             return;
         }
         else
         {
-            ROS_INFO("Point clound messages received");
-            pc = * msg;
+            ROS_INFO("Point clound message received");
+            // pc = * msg;
 
             sensor_msgs::PointCloud2 sen_msg_pc2_tf;
 
-            pcl_ros::transformPointCloud("mount_plate_link", pc, sen_msg_pc2_tf, tf_buffer);
+            pcl_ros::transformPointCloud("mount_plate_link", *msg, sen_msg_pc2_tf, tf_buffer);
 
             if (sen_msg_pc2_tf.data.size() < 1)
             {
                 return;
             }
-
-            //pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_pc_filtered_ptr;
             pcl::fromROSMsg(sen_msg_pc2_tf, *pcl_pc_ptr);
 
             //DEBUG publish pointcloud to "pclEdit" topic
-            publisher_pointcloud_debug.publish(*pcl_pc_ptr);
+            publisher_pointcloud_debug.publish(pcl_pc_ptr);
         }
-
-        pcl::PointIndices::Ptr cylinder_inliers_ptr (new pcl::PointIndices);
-        pcl::PointIndices::Ptr cylinder_max_z_neighbors_ptr (new pcl::PointIndices);
-        pcl::ModelCoefficients::Ptr cylinder_coefficients_ptr (new pcl::ModelCoefficients);
 
         //removeAllMarkers();
 
@@ -718,7 +720,8 @@ public:
             setPointListMarker(cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers", 0.0, 0.0, 1.0, 1.0);
 
             // publish sphere marker at cylinder inliers z max, color: blue
-            setSphereMarker(getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr), "z_max_cylinder", 0.0, 0.0, 1.0, 1.0);
+            maxZCylinder = getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr);
+            setSphereMarker(maxZCylinder, "z_max_cylinder", 0.0, 0.0, 1.0, 1.0);
 
             // publish sphere marker at cylinder inliers centroid color: orange
             setSphereMarker(getCentroidPoint(pcl_pc_ptr, cylinder_inliers_ptr), "centroid_cylinder_inliers", 1.0, 0.0, 0.0, 1.0);
@@ -734,8 +737,20 @@ public:
         // publish points marker at cylinder z max neighbors, color: red
         //setPointListMarker(cylinder_max_z_neighbors_ptr, pcl_pc_filtered_ptr, "cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
         
-        //TODO:
-        result_.grasping_pose = geometry_msgs::PoseStamped();
+        quaternion_cylinder = obtainCylinderOrientationFromModel(*cylinder_coefficients_ptr);
+        
+        pose_result.pose.position.x = maxZCylinder.x;
+        pose_result.pose.position.y = maxZCylinder.y;
+        pose_result.pose.position.z = maxZCylinder.z;
+        pose_result.pose.orientation.w = quaternion_cylinder.w();
+        pose_result.pose.orientation.x = quaternion_cylinder.x();
+        pose_result.pose.orientation.y = quaternion_cylinder.y();
+        pose_result.pose.orientation.z = quaternion_cylinder.z();
+        pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+
+        result_.grasping_pose = pose_result;
+        as_.setSucceeded(result_);
+        ROS_INFO("Done!");
     }
 };
 
