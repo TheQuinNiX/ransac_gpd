@@ -36,6 +36,10 @@ catkin_install_python(PROGRAMS scripts/grasp_action_tester.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
+catkin_install_python(PROGRAMS scripts/action_client.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 add_executable(listener src/listener.cpp)
 add_executable(viewer src/viewer.cpp)
 

@@ -3,22 +3,21 @@
 import sys
 import copy
 import rospy
-import moveit_commander
-import moveit_msgs.msg
-import geometry_msgs.msg
-import get_grasping_pointAction.msg
+#import moveit_commander
+#import moveit_msgs.msg
+import ransac_gpd.msg
 import numpy as np
 import actionlib
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Joy, JointState
 from controller_manager_msgs.srv import SwitchController
-from diana7_msgs.srv import SetControlMode, SetControlModeRequest, SetImpedance, SetImpedanceRequest
-from diana7_msgs.msg import CartesianState
-from fabric_grasping.msg import GraspAction, GraspResult, GraspFeedback, GraspGoal
+#from diana7_msgs.srv import SetControlMode, SetControlModeRequest, SetImpedance, SetImpedanceRequest
+#from diana7_msgs.msg import CartesianState
+#from fabric_grasping.msg import GraspAction, GraspResult, GraspFeedback, GraspGoal
 
 class GraspTester:
     def __init__(self):
-        moveit_commander.roscpp_initialize(sys.argv)
+        #moveit_commander.roscpp_initialize(sys.argv)
         rospy.init_node("diana7_grasping_demo")
 
         '''
@@ -54,11 +53,16 @@ class GraspTester:
             self.load_position_controller()
             self.move_to_init()
             '''
-            rospy.INFO("debug 56")
+            print("Wait for action server...")
+            self.grasp_client.wait_for_server()
             #goal = GraspGoal()
-            #self.grasp_client.send_goal(goal)
+            goal = ransac_gpd.msg.get_grasping_pointGoal(grasping_action_goal=0)
+            print("send goal...")
+            self.grasp_client.send_goal(goal)
+            print("wait for result...")
             self.grasp_client.wait_for_result()
-            rospy.INFO("debug 60")
+            print("Got result!")
+            print("Result:", self.grasp_client.get_result())
             
             '''
             self.unload_controllers()
