@@ -3,24 +3,24 @@
 import sys
 import copy
 import rospy
-#import moveit_commander
-#import moveit_msgs.msg
+import moveit_commander
+import moveit_msgs.msg
 import ransac_gpd.msg
 import numpy as np
 import actionlib
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Joy, JointState
 from controller_manager_msgs.srv import SwitchController
-#from diana7_msgs.srv import SetControlMode, SetControlModeRequest, SetImpedance, SetImpedanceRequest
-#from diana7_msgs.msg import CartesianState
-#from fabric_grasping.msg import GraspAction, GraspResult, GraspFeedback, GraspGoal
+from diana7_msgs.srv import SetControlMode, SetControlModeRequest, SetImpedance, SetImpedanceRequest
+from diana7_msgs.msg import CartesianState
+from fabric_grasping.msg import GraspAction, GraspResult, GraspFeedback, GraspGoal
 
 class GraspTester:
     def __init__(self):
         #moveit_commander.roscpp_initialize(sys.argv)
         rospy.init_node("diana7_grasping_demo")
 
-        '''
+        
         self.robot = moveit_commander.RobotCommander()
 
         rospy.wait_for_service('/controller_manager/switch_controller')
@@ -33,47 +33,56 @@ class GraspTester:
         self.set_joint_imp = rospy.ServiceProxy('/diana7_hardware_interface/set_joint_impedance', SetImpedance)
 
         self.gripper_goal_pub = rospy.Publisher('diana_gripper/simple_goal', JointState, queue_size=10)
-        self.arm_vel_pub = rospy.Publisher('/cartesian_twist_controller/command', Twist, queue_size=10)
+        # self.arm_vel_pub = rospy.Publisher('/cartesian_twist_controller/command', Twist, queue_size=10)
 
         self.scene = moveit_commander.PlanningSceneInterface(synchronous=True)
         self.arm_group = moveit_commander.MoveGroupCommander('arm')
         self.gripper_group = moveit_commander.MoveGroupCommander('gripper')
-        '''
+        
 
         self.grasp_client = actionlib.SimpleActionClient('get_grasping_point', ransac_gpd.msg.get_grasping_pointAction)
+        print("Wait for action server...")
+        self.grasp_client.wait_for_server()
         
         cont = ''
         
         while cont == '' and not rospy.is_shutdown():
             # setting everything up to start from scratch
-            '''
+            
             print('initializing...')
             self.unload_controllers()
             self.to_position_mode()
             self.load_position_controller()
             self.move_to_init()
-            '''
-            print("Wait for action server...")
-            self.grasp_client.wait_for_server()
-            #goal = GraspGoal()
+
             goal = ransac_gpd.msg.get_grasping_pointGoal(grasping_action_goal=0)
             print("send goal...")
             self.grasp_client.send_goal(goal)
             print("wait for result...")
             self.grasp_client.wait_for_result()
-            print("Result:", self.grasp_client.get_result())
+            print("result:", self.grasp_client.get_result())
+
+            self.move_arm_to_named_target('idle_user_high')
+            self.send_gripper_command(0, 0, 0)
+            rospy.sleep(1)      
+            self.move_arm_to_named_target('idle_user')
+            self.send_gripper_command(0.85, 0, 0)
+            rospy.sleep(1)            
+            self.move_arm_to_named_target('idle_user_high')
             
             '''
             self.unload_controllers()
             self.to_position_mode()
+            '''
+
             self.load_position_controller()
-            self.move_arm_to_named_target('idle_user_high')
+            self.move_arm_to_named_target('idle_high')
             # self.send_gripper_command(self.gripper_goal, 0, 0.3)
             input('drop it?')
             self.send_gripper_command(0, 0, 0)
-            self.unload_controllers()
+            #self.unload_controllers()
             cont = input('continue?')
-            '''
+            
             
     def move_down(self, speed=0.004):
         speed = -abs(speed)
@@ -119,7 +128,7 @@ class GraspTester:
         # self.set_gripper_goal_position(-0.5)
         self.set_gripper_goal_position(0.2)
         self.send_gripper_goal()
-        self.move_arm_to_named_target('idle_user_high')
+        self.move_arm_to_named_target('idle_high')
 
     def set_gripper_goal_position(self, pos):
         self.gripper_goal = pos
