@@ -7,23 +7,21 @@ import actionlib
 import ransac_gpd.msg
 
 def action_client():
-    # Creates the SimpleActionClient, passing the type of the action
-    # (FibonacciAction) to the constructor.
+    # Creates the SimpleActionClient
     client = actionlib.SimpleActionClient('get_grasping_point', ransac_gpd.msg.get_grasping_pointAction)
 
-    # Waits until the action server has started up and started
-    # listening for goals.
+    # Waits until the action server has started up and started listening for goals
     print("Wait for action server...")
     client.wait_for_server()
     print("Action server found!")
 
-    # Creates a goal to send to the action server.
+    # Creates a goal to send to the action server
     goal = ransac_gpd.msg.get_grasping_pointGoal(grasping_action_goal=0)
 
-    # Sends the goal to the action server.
+    # Sends the goal to the action server
     client.send_goal(goal)
     print("Goal send...")
-    # Waits for the server to finish performing the action.
+    # Waits for the server to finish performing the action
     client.wait_for_result()
     print("Result received!")
 
@@ -32,8 +30,7 @@ def action_client():
 
 if __name__ == '__main__':
     try:
-        # Initializes a rospy node so that the SimpleActionClient can
-        # publish and subscribe over ROS.
+        # Initializes a rospy node so that the SimpleActionClient can publish and subscribe over ROS
         rospy.init_node('action_client_py')
         result = action_client()
         print("Result:", result)

@@ -26,7 +26,6 @@ protected:
     actionlib::SimpleActionServer<ransac_gpd::get_grasping_pointAction> as_;    
     std::string action_name_;
 
-    // create messages that are used to published feedback/result
     ransac_gpd::get_grasping_pointFeedback feedback_;
     ransac_gpd::get_grasping_pointResult result_;
 
@@ -45,12 +44,13 @@ protected:
     double double_setDistanceThreshold;
     std::string string_frame;
     bool bool_crop_box;
+    double double_max_z_neighbor_radius;
 
     tf2_ros::Buffer tf_buffer;
     
 public:
 
-    //dynamic_reconfigure callback
+    // Dynamic reconfigure callback
     void callbackDynamicReconfigure(ransac_gpd::parametersConfig &config, u_int32_t level)
     {        
         int_setKSearch = config.int_setKSearch;
@@ -59,6 +59,7 @@ public:
         string_frame = config.string_frame;
         bool_crop_box = config.bool_crop_box;
         int_gp_method = config.gp_method;
+        double_max_z_neighbor_radius = config.double_max_z_neighbor_radius;
         ROS_INFO_STREAM(int_gp_method);
         ROS_INFO("Parameters changed!");
     }
@@ -73,6 +74,7 @@ public:
         return true;
     }
 
+    /*
     inline Eigen::Quaternionf getPointOrientation(pcl::PointCloud<pcl::PointXYZ> input_pointcloud, pcl::PointXYZ input_point)
     {
         Eigen::Vector3f axis_vector(coefficients.values.at(3), coefficients.values.at(4), coefficients.values.at(5));
@@ -85,6 +87,7 @@ public:
 
         return q;
     }
+    */
 
     // Calculates quaternion from RANSAC model cofficients.
     inline Eigen::Quaternionf obtainCylinderOrientationFromModel(pcl::ModelCoefficients& coefficients)
@@ -564,18 +567,42 @@ public:
         publisher_vis_marker.publish(marker_ptr);
     }
 
+    // This function removes every marker set before.
     void removeAllMarkers()
     {
         removeCylinderMarker(string_frame);
-        removePointListMarker("cylinder_inliers", string_frame);
         removeSphereMarker("z_max_all", string_frame);
         removeSphereMarker("z_max_cylinder", string_frame);
         removeSphereMarker("centroid_all", string_frame);
         removeSphereMarker("centroid_cylinder_neighbors", string_frame);
         removeSphereMarker("centroid_cylinder_inliers", string_frame);
+        removePointListMarker("cylinder_inliers", string_frame);
         removePointListMarker("cylinder_neighbors", string_frame);
+        removePointListMarker("max_z_neighbors", string_frame);
     }
 
+    // This function resturns point indices of neighbor points of a single point.
+    pcl::PointIndices::Ptr getPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ input_point, float radius)
+    {
+        pcl::PointIndices::Ptr indices_neighbors_ptr (new pcl::PointIndices);
+
+        pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+            kdtree.setInputCloud(input_pointcloud);
+            
+            std::vector<int> indices_radius_search;
+            std::vector<float> radius_squared_distance;
+
+            if (kdtree.radiusSearch(input_point, radius, indices_radius_search, radius_squared_distance) > 0)
+            {
+                for (int i = 0; i < indices_radius_search.size(); i++)
+                {
+                    indices_neighbors_ptr->indices.push_back(indices_radius_search[i]);
+                }
+            }
+        ROS_INFO_STREAM("Neighbors: " << indices_neighbors_ptr->indices.size());
+        return indices_neighbors_ptr;
+    }
+    
     pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ search_point)
     {
         pcl::PointIndices::Ptr point_neighbors_indices_ptr (new pcl::PointIndices);
@@ -616,6 +643,7 @@ public:
         return filtered_pointcloud;
     }
 
+    // This function returns the centroid point of a given pointcloud and optionally point indices.
     pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud)
     {
         pcl::CentroidPoint<pcl::PointXYZ> centroid;
@@ -720,7 +748,6 @@ public:
 
             moveUp(pcl_pc_ptr);
         }
-        
         // remove every point from the pointcloud representing the groundplane
         removeGroundPlane(pcl_pc_ptr);
 
@@ -733,10 +760,16 @@ public:
         publisher_pointcloud.publish(*pcl_pc_ptr);
 
         // publish sphere marker at overall z max, color: purple
-        setSphereMarker(getPointMaxZ(pcl_pc_ptr), "z_max_all", string_frame, 0.5, 0.0, 0.5, 1.0);
+        point_max_z_all = getPointMaxZ(pcl_pc_ptr);
+        setSphereMarker(point_max_z_all, "z_max_all", string_frame, 0.5, 0.0, 0.5, 1.0);
+
+        pcl::PointIndicesPtr indices_max_z_neighbors = getPointNeighbors(pcl_pc_ptr, point_max_z_all, double_max_z_neighbor_radius);
+        setPointListMarker(indices_max_z_neighbors, pcl_pc_ptr, "max_z_neighbors", string_frame, 0.5, 0.0, 0.5, 1.0);
 
         // publish points marker at centroid overall points, color: green
-        setSphereMarker(getCentroidPoint(pcl_pc_ptr), "centroid_all", string_frame, 0.0, 1.0, 0.0, 1.0);
+        point_centroid_all = getCentroidPoint(pcl_pc_ptr);
+        setSphereMarker(point_centroid_all, "centroid_all", string_frame, 0.0, 1.0, 0.0, 1.0);
+        
 
         // find cylinder and publish markers
         findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
@@ -751,11 +784,11 @@ public:
 
             // publish sphere marker at cylinder inliers z max, color: blue
             point_max_z_cylinder = getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr);
-            setSphereMarker(maxZCylinder, "z_max_cylinder", string_frame, 0.0, 0.0, 1.0, 1.0);
+            setSphereMarker(point_max_z_cylinder, "z_max_cylinder", string_frame, 0.0, 0.0, 1.0, 1.0);
 
             // publish sphere marker at cylinder inliers centroid color: red
             point_centroid_cylinder = getCentroidPoint(pcl_pc_ptr, cylinder_inliers_ptr);
-            setSphereMarker(centroidCylinder, "centroid_cylinder_inliers", string_frame, 1.0, 0.0, 0.0, 1.0);
+            setSphereMarker(point_centroid_cylinder, "centroid_cylinder_inliers", string_frame, 1.0, 0.0, 0.0, 1.0);
         }
 
         //pcl_pc_filtered_ptr = getNewPcFromIndices(pcl_pc_ptr, cylinder_inliers_ptr);
@@ -770,8 +803,7 @@ public:
         
         switch (int_gp_method)
         {
-        case 0:
-            //TODO: quaternion max z all
+        case 0: //TODO: quaternion max z all
             pose_result.pose.position.x = point_max_z_all.x;
             pose_result.pose.position.y = point_max_z_all.y;
             pose_result.pose.position.z = point_max_z_all.z;
@@ -781,8 +813,7 @@ public:
             pose_result.pose.orientation.z = quaternion_cylinder.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
-        case 1:
-            //TODO: quaternion centroid all
+        case 1: //TODO: quaternion centroid all
             pose_result.pose.position.x = point_centroid_all.x;
             pose_result.pose.position.y = point_centroid_all.y;
             pose_result.pose.position.z = point_centroid_all.z;
@@ -792,7 +823,7 @@ public:
             pose_result.pose.orientation.z = quaternion_cylinder.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
-        case 2:
+        case 2: // Cylinder max z
             quaternion_cylinder = obtainCylinderOrientationFromModel(*cylinder_coefficients_ptr);
             pose_result.pose.position.x = point_max_z_cylinder.x;
             pose_result.pose.position.y = point_max_z_cylinder.y;
@@ -803,7 +834,7 @@ public:
             pose_result.pose.orientation.z = quaternion_cylinder.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
-        case 3:
+        case 3: // Cylinder centroid
             quaternion_cylinder = obtainCylinderOrientationFromModel(*cylinder_coefficients_ptr);
             pose_result.pose.position.x = point_centroid_cylinder.x;
             pose_result.pose.position.y = point_centroid_cylinder.y;

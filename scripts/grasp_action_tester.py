@@ -61,7 +61,6 @@ class GraspTester:
             self.grasp_client.send_goal(goal)
             print("wait for result...")
             self.grasp_client.wait_for_result()
-            print("Got result!")
             print("Result:", self.grasp_client.get_result())
             
             '''
@@ -76,8 +75,6 @@ class GraspTester:
             cont = input('continue?')
             '''
             
-
-
     def move_down(self, speed=0.004):
         speed = -abs(speed)
         msg = Twist()
