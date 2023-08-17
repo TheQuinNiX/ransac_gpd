@@ -8,7 +8,7 @@ import moveit_msgs.msg
 import ransac_gpd.msg
 import numpy as np
 import actionlib
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseStamped
 from sensor_msgs.msg import Joy, JointState
 from controller_manager_msgs.srv import SwitchController
 from diana7_msgs.srv import SetControlMode, SetControlModeRequest, SetImpedance, SetImpedanceRequest
@@ -33,7 +33,7 @@ class GraspTester:
         self.set_joint_imp = rospy.ServiceProxy('/diana7_hardware_interface/set_joint_impedance', SetImpedance)
 
         self.gripper_goal_pub = rospy.Publisher('diana_gripper/simple_goal', JointState, queue_size=10)
-        # self.arm_vel_pub = rospy.Publisher('/cartesian_twist_controller/command', Twist, queue_size=10)
+        self.arm_vel_pub = rospy.Publisher('/cartesian_twist_controller/command', Twist, queue_size=10)
 
         self.scene = moveit_commander.PlanningSceneInterface(synchronous=True)
         self.arm_group = moveit_commander.MoveGroupCommander('arm')
@@ -60,15 +60,22 @@ class GraspTester:
             self.grasp_client.send_goal(goal)
             print("wait for result...")
             self.grasp_client.wait_for_result()
-            print("result:", self.grasp_client.get_result())
+
+            pose_result = self.grasp_client.get_result().grasping_pose
+
+            print("result:", pose_result)
+            input("Check pose! Continue?")
 
             self.move_arm_to_named_target('idle_user_high')
             self.send_gripper_command(0, 0, 0)
             rospy.sleep(1)      
-            self.move_arm_to_named_target('idle_user')
-            self.send_gripper_command(0.85, 0, 0)
-            rospy.sleep(1)            
-            self.move_arm_to_named_target('idle_user_high')
+            self.move_arm_to_pose_target(pose_result)
+            self.send_gripper_command(1.1, 0, 0)
+            rospy.sleep(1.5)     
+            self.load_twist_controller()
+            self.move_up(0.05)
+            rospy.sleep(5)
+            self.stop()
             
             '''
             self.unload_controllers()
@@ -125,7 +132,7 @@ class GraspTester:
         self.load_position_controller()
         print("moving to init pose.")
         # self.move_gripper_to_named_target('wide_open_parallel')
-        # self.set_gripper_goal_position(-0.5)
+        # self.set_gripper_goal_position(-0.5)ge, a PoseStamped message or a 
         self.set_gripper_goal_position(0.2)
         self.send_gripper_goal()
         self.move_arm_to_named_target('idle_high')
@@ -200,6 +207,22 @@ class GraspTester:
                 if len(x) > 0:
                     sys.exit()
             print(f"retrying arm motion to \"{target_name}\"")
+            i += 1
+            rospy.sleep(t)
+
+    def move_arm_to_pose_target(self, pose:PoseStamped):
+        t = rospy.Duration(1)
+        max_i = 2
+        self.arm_group.set_pose_target(pose)
+        success = False
+        i = 0
+        while not success:
+            success = self.arm_group.go(wait=True)
+            if i > max_i:
+                x = input()
+                if len(x) > 0:
+                    sys.exit()
+            print(f"retrying arm motion to \"{pose}\"")
             i += 1
             rospy.sleep(t)
 

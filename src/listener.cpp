@@ -73,20 +73,54 @@ public:
         return true;
     }
 
-    /*
-    inline Eigen::Quaternionf getPointOrientation(pcl::PointCloud<pcl::PointXYZ> input_pointcloud, pcl::PointXYZ input_point)
+    inline Eigen::Matrix3f getMatrixPointOrientation(pcl::PointCloud<pcl::PointXYZ>::Ptr input_pointcloud, pcl::PointXYZ input_point, pcl::PointIndices::Ptr input_indices)
     {
-        Eigen::Vector3f axis_vector(coefficients.values.at(3), coefficients.values.at(4), coefficients.values.at(5));
-        Eigen::Vector3f up_vector(0.0, 0.0, -1.0);
-        Eigen::Vector3f right_vector = axis_vector.cross(up_vector);
-        right_vector.normalized();
+        Eigen::Matrix3f matrix;
 
-        Eigen::Quaternionf q(Eigen::AngleAxisf(-1.0 * std::acos(axis_vector.dot(up_vector)), right_vector));
-        q.normalize();
+        pcl::PointXYZ point_12oc = input_point;
+        pcl::PointXYZ point_6oc = input_point;
+        pcl::PointXYZ point_3oc = input_point;
+        pcl::PointXYZ point_9oc = input_point;
+        pcl::PointXYZ point_max_z;
+        pcl::PointXYZ point_temp;
 
-        return q;
+        for (int i = 0; i < input_indices->indices.size(); i++)
+        {
+            point_temp = input_pointcloud->at(i);
+
+            if (point_temp.x > point_12oc.x)
+            {
+                point_12oc = point_temp;
+            }
+
+            if (point_temp.x < point_6oc.x)
+            {
+                point_6oc = point_temp;
+            }
+
+            if (point_temp.y > point_3oc.x)
+            {
+                point_3oc = point_temp;
+            }
+
+            if (point_temp.y < point_9oc.x)
+            {
+                point_9oc = point_temp;
+            }
+        }
+
+        if (point_12oc)
+        {
+            /* code */
+        }
+        
+        
+        matrix <<   0, 0, 0,
+                    0, 0, 0,
+                    0, 0, 1;
+
+        return matrix;
     }
-    */
 
     // Calculates quaternion from RANSAC model cofficients.
     Eigen::Quaternionf obtainCylinderOrientationFromModel(pcl::ModelCoefficients& coefficients)
@@ -107,11 +141,32 @@ public:
         Eigen::Matrix3f matrix_rotation;
         float lf = 1 / sqrt(std::pow(input_matrix.coeff(0,2),2) + std::pow(input_matrix.coeff(1,2),2));
 
-        matrix_rotation <<  -input_matrix.coeff(1,2) * lf,    input_matrix.coeff(0,2) * lf,   0,
-                            input_matrix.coeff(0,2) * lf,    input_matrix.coeff(1,2) * lf,   0,
-                            0,                          0,                              -1;
+        matrix_rotation <<  input_matrix.coeff(1,2) * lf,    input_matrix.coeff(0,2) * lf,   0,
+                            -input_matrix.coeff(0,2) * lf,    input_matrix.coeff(1,2) * lf,   0,
+                            0,                          0,                              1;
 
         return matrix_rotation;
+    }
+
+    Eigen::Matrix3f fixMatrixY(Eigen::Matrix3f input_matrix)
+    {
+        Eigen::Matrix3f matrix_fixed_y;
+
+        if (input_matrix.coeff(1,1) < 0)
+        {
+
+            matrix_fixed_y <<   -input_matrix.coeff(0,0), -input_matrix.coeff(0,1)  , input_matrix.coeff(0,2),
+                                -input_matrix.coeff(1,0), -input_matrix.coeff(1,1)  , input_matrix.coeff(1,2),
+                                input_matrix.coeff(2,0)     , input_matrix.coeff(2,1)       , input_matrix.coeff(2,2);
+        ROS_INFO("Fixed matrix y!");
+        }
+        else
+        {
+            matrix_fixed_y = input_matrix;
+        }
+        
+        
+        return matrix_fixed_y;
     }
 
     // This function returns the point with the highest z value from a pointcloud.
@@ -749,7 +804,7 @@ public:
             publisher_pointcloud_debug.publish(pcl_pc_ptr);
         }
 
-        //removeAllMarkers();
+        removeAllMarkers();
 
         ROS_INFO_STREAM("Seq. Nr.: " << pcl_pc_ptr->header.seq);
 
@@ -765,7 +820,7 @@ public:
 
         if (bool_crop_box)
         {
-            addCropBox(pcl_pc_ptr, 0.25, 0.05, -1.0, 0.65, 0.4, 10.0);
+            addCropBox(pcl_pc_ptr, 0.25, -0.25, 0.0, 0.55, 0.25, 1.0);
         }
 
         // publish pointcloud to "pclEdit" topic
@@ -781,7 +836,6 @@ public:
         // publish points marker at centroid overall points, color: green
         point_centroid_all = getCentroidPoint(pcl_pc_ptr);
         setSphereMarker(point_centroid_all, "centroid_all", string_frame, 0.0, 1.0, 0.0, 1.0);
-        
 
         // find cylinder and publish markers
         findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
@@ -803,46 +857,35 @@ public:
             setSphereMarker(point_centroid_cylinder, "centroid_cylinder_inliers", string_frame, 1.0, 0.0, 0.0, 1.0);
             quaternion_cylinder = obtainCylinderOrientationFromModel(*cylinder_coefficients_ptr);
         }
-
-        //pcl_pc_filtered_ptr = getNewPcFromIndices(pcl_pc_ptr, cylinder_inliers_ptr);
-
-        //cylinder_max_z_neighbors_ptr = removeNotDirectPointNeighbors(pcl_pc_filtered_ptr, getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr));
-
-        // publish sphere marker at cylinder z max neighbors centroid, color: red
-        //setSphereMarker(getCentroidPoint(pcl_pc_filtered_ptr, cylinder_max_z_neighbors_ptr), "centroid_cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
-
-        // publish points marker at cylinder z max neighbors, color: red
-        //setPointListMarker(cylinder_max_z_neighbors_ptr, pcl_pc_filtered_ptr, "cylinder_neighbors", 1.0, 0.0, 0.0, 1.0);
         
-            Eigen::Quaternionf q(editMatrix(quaternion_cylinder.toRotationMatrix()));
+        Eigen::Quaternionf q(fixMatrixY(editMatrix(quaternion_cylinder.toRotationMatrix())));
+        
         switch (int_gp_method)
         {
         case 0: //TODO: quaternion max z all
             pose_result.pose.position.x = point_max_z_all.x;
             pose_result.pose.position.y = point_max_z_all.y;
-            pose_result.pose.position.z = point_max_z_all.z;
-            pose_result.pose.orientation.w = quaternion_cylinder.w();
-            pose_result.pose.orientation.x = quaternion_cylinder.x();
-            pose_result.pose.orientation.y = quaternion_cylinder.y();
-            pose_result.pose.orientation.z = quaternion_cylinder.z();
+            pose_result.pose.position.z = std::min(point_max_z_all.z + 0.16 + 0.05, 0.16 + 0.02);
+            pose_result.pose.orientation.w = q.w();
+            pose_result.pose.orientation.x = q.x();
+            pose_result.pose.orientation.y = q.y();
+            pose_result.pose.orientation.z = q.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
         case 1: //TODO: quaternion centroid all
             pose_result.pose.position.x = point_centroid_all.x;
             pose_result.pose.position.y = point_centroid_all.y;
-            pose_result.pose.position.z = point_centroid_all.z;
-            pose_result.pose.orientation.w = quaternion_cylinder.w();
-            pose_result.pose.orientation.x = quaternion_cylinder.x();
-            pose_result.pose.orientation.y = quaternion_cylinder.y();
-            pose_result.pose.orientation.z = quaternion_cylinder.z();
+            pose_result.pose.position.z = std::min(point_centroid_all.z + 0.16 + 0.05, 0.16 + 0.02);
+            pose_result.pose.orientation.w = q.w();
+            pose_result.pose.orientation.x = q.x();
+            pose_result.pose.orientation.y = q.y();
+            pose_result.pose.orientation.z = q.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
         case 2: // Cylinder max z
-            
             pose_result.pose.position.x = point_max_z_cylinder.x;
             pose_result.pose.position.y = point_max_z_cylinder.y;
-            pose_result.pose.position.z = point_max_z_cylinder.z;
-
+            pose_result.pose.position.z = std::min(point_max_z_cylinder.z + 0.16 + 0.05, 0.16 + 0.02);
             pose_result.pose.orientation.w = q.w();
             pose_result.pose.orientation.x = q.x();
             pose_result.pose.orientation.y = q.y();
@@ -850,10 +893,9 @@ public:
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
         case 3: // Cylinder centroid
-            
             pose_result.pose.position.x = point_centroid_cylinder.x;
             pose_result.pose.position.y = point_centroid_cylinder.y;
-            pose_result.pose.position.z = point_centroid_cylinder.z;
+            pose_result.pose.position.z = std::min(point_centroid_cylinder.z + 0.16 + 0.05, 0.16 + 0.02);
             pose_result.pose.orientation.w = q.w();
             pose_result.pose.orientation.x = q.x();
             pose_result.pose.orientation.y = q.y();
@@ -863,11 +905,10 @@ public:
         default:
             break;
         }
-        
-        result_.grasping_pose = pose_result;
         publisher_pose.publish(pose_result);
+        result_.grasping_pose = pose_result;
         as_.setSucceeded(result_);
-        ROS_INFO("Done!");
+        ROS_INFO_STREAM("#### Done! ####");
     }
 };
 
