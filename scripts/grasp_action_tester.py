@@ -66,9 +66,9 @@ class GraspTester:
             print("result:", pose_result)
             input("Check pose! Continue?")
 
-            self.move_arm_to_named_target('idle_user_high')
             self.send_gripper_command(0, 0, 0)
             rospy.sleep(1)      
+            self.move_arm_to_pose_target(pose_result, z_offset=0.1)
             self.move_arm_to_pose_target(pose_result)
             self.send_gripper_command(1.1, 0, 0)
             rospy.sleep(1.5)     
@@ -210,10 +210,12 @@ class GraspTester:
             i += 1
             rospy.sleep(t)
 
-    def move_arm_to_pose_target(self, pose:PoseStamped):
+    def move_arm_to_pose_target(self, pose:PoseStamped, z_offset=0):
         t = rospy.Duration(1)
         max_i = 2
-        self.arm_group.set_pose_target(pose)
+        goal_pose = copy.deepcopy(pose)
+        goal_pose.pose.position.z += z_offset
+        self.arm_group.set_pose_target(goal_pose)
         success = False
         i = 0
         while not success:
@@ -222,7 +224,7 @@ class GraspTester:
                 x = input()
                 if len(x) > 0:
                     sys.exit()
-            print(f"retrying arm motion to \"{pose}\"")
+            print(f"retrying arm motion to \"{goal_pose}\"")
             i += 1
             rospy.sleep(t)
 
