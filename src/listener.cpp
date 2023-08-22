@@ -422,6 +422,8 @@ public:
         Eigen::Matrix3f matrix;
         Eigen::Quaternionf quaternion;
         pcl::PointXYZ point_max_avg_z_box (0.0, 0.0, 0.0);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_max_avg_z_ptr (new pcl::PointCloud<pcl::PointXYZ>);
+
         float rotation_temp;
         
         for (int i = 0; i <= 359; i++)
@@ -432,9 +434,13 @@ public:
             if (point_avg_temp.z > point_max_avg_z_box.z)
             {
                 point_max_avg_z_box = point_avg_temp;
+                pointcloud_max_avg_z_ptr = pointcloud_temp_ptr;
                 rotation_temp = i;
             }
+            ros::Duration(0.005).sleep();
         }
+
+        publisher_pointcloud_orientation_scan.publish(pointcloud_max_avg_z_ptr);
 
         matrix <<   0, 1, 0,
                     -1, 0, 0,
@@ -764,6 +770,7 @@ public:
         pcl::PointXYZ point_max_z_all;
         pcl::PointXYZ point_centroid_all;
         geometry_msgs::PoseStamped pose_result;
+        geometry_msgs::PoseStamped pose_result_copy;
         Eigen::Quaternionf quaternion_cylinder;
         Eigen::Quaternionf quaternion_point_z_all;
         Eigen::Quaternionf quaternion_point_centroid_all;
@@ -810,7 +817,7 @@ public:
 
         if (bool_crop_box)
         {
-            addCropBox(pcl_pc_ptr, 0.25, -0.25, 0.0, 0.55, 0.25, 1.0);
+            addCropBox(pcl_pc_ptr, 0.25, -0.45, 0.0, 0.55, 0.0, 0.25);
         }
 
         // publish pointcloud to "pclEdit" topic
@@ -851,51 +858,59 @@ public:
         
         switch (int_gp_method)
         {
-        case 0: // Quaternion max z all
+        case 0: // Max z all
             pose_result.pose.position.x = point_max_z_all.x;
             pose_result.pose.position.y = point_max_z_all.y;
-            pose_result.pose.position.z = std::min(point_max_z_all.z + 0.16 + 0.05, 0.16 + 0.02);
+            pose_result.pose.position.z = std::max(point_max_z_all.z + 0.16 - 0.02, 0.16 + 0.02);
             pose_result.pose.orientation.w = quaternion_point_z_all.w();
             pose_result.pose.orientation.x = quaternion_point_z_all.x();
             pose_result.pose.orientation.y = quaternion_point_z_all.y();
             pose_result.pose.orientation.z = quaternion_point_z_all.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+            pose_result_copy = pose_result;
+            pose_result_copy.pose.position.z = std::max(point_max_z_all.z, 0.02f);
             break;
-        case 1: // Quaternion centroid all
+        case 1: // Centroid all
             pose_result.pose.position.x = point_centroid_all.x;
             pose_result.pose.position.y = point_centroid_all.y;
-            pose_result.pose.position.z = std::min(point_centroid_all.z + 0.16 + 0.05, 0.16 + 0.02);
+            pose_result.pose.position.z = std::max(point_centroid_all.z + 0.16 - 0.02, 0.16 + 0.02);
             pose_result.pose.orientation.w = quaternion_point_centroid_all.w();
             pose_result.pose.orientation.x = quaternion_point_centroid_all.x();
             pose_result.pose.orientation.y = quaternion_point_centroid_all.y();
             pose_result.pose.orientation.z = quaternion_point_centroid_all.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+            pose_result_copy = pose_result;
+            pose_result_copy.pose.position.z = std::max(point_centroid_all.z, 0.02f);
             break;
         case 2: // Cylinder max z
             pose_result.pose.position.x = point_max_z_cylinder.x;
             pose_result.pose.position.y = point_max_z_cylinder.y;
-            pose_result.pose.position.z = std::min(point_max_z_cylinder.z + 0.16 + 0.05, 0.16 + 0.02);
+            pose_result.pose.position.z = std::max(point_max_z_cylinder.z + 0.16 - 0.02, 0.16 + 0.02);
             pose_result.pose.orientation.w = quaternion_cylinder_fixed.w();
             pose_result.pose.orientation.x = quaternion_cylinder_fixed.x();
             pose_result.pose.orientation.y = quaternion_cylinder_fixed.y();
             pose_result.pose.orientation.z = quaternion_cylinder_fixed.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+            pose_result_copy = pose_result;
+            pose_result_copy.pose.position.z = std::max(point_max_z_cylinder.z, 0.02f);
             break;
         case 3: // Cylinder centroid
             pose_result.pose.position.x = point_centroid_cylinder.x;
             pose_result.pose.position.y = point_centroid_cylinder.y;
-            pose_result.pose.position.z = std::min(point_centroid_cylinder.z + 0.16 + 0.05, 0.16 + 0.02);
+            pose_result.pose.position.z = std::max(point_centroid_cylinder.z + 0.16 - 0.02, 0.16 + 0.02);
             pose_result.pose.orientation.w = quaternion_cylinder_fixed.w();
             pose_result.pose.orientation.x = quaternion_cylinder_fixed.x();
             pose_result.pose.orientation.y = quaternion_cylinder_fixed.y();
             pose_result.pose.orientation.z = quaternion_cylinder_fixed.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+            pose_result_copy = pose_result;
+            pose_result_copy.pose.position.z = std::max(point_centroid_cylinder.z, 0.02f);
             break;
         default:
             break;
         }
         
-        publisher_pose.publish(pose_result);
+        publisher_pose.publish(pose_result_copy);
         result_.grasping_pose = pose_result;
         result_.grasping_width = cylinder_coefficients_ptr->values.at(6);
         as_.setSucceeded(result_);
