@@ -17,6 +17,7 @@
 #include "ransac_gpd/parametersConfig.h"
 #include "actionlib/server/simple_action_server.h"
 #include "ransac_gpd/get_grasping_pointAction.h"
+#include "math.h"
 
 class get_grasping_pointAction
 {
@@ -32,6 +33,7 @@ protected:
     ros::Publisher publisher_pointcloud;
     ros::Publisher publisher_pointcloud_normals;
     ros::Publisher publisher_pointcloud_debug;
+    ros::Publisher publisher_pointcloud_orientation_scan;
     ros::Publisher publisher_vis_marker;
     ros::Publisher publisher_pose;
 
@@ -51,7 +53,7 @@ protected:
 public:
 
     // Dynamic reconfigure callback
-    void callbackDynamicReconfigure(ransac_gpd::parametersConfig &config, u_int32_t level)
+    inline void callbackDynamicReconfigure(ransac_gpd::parametersConfig &config, u_int32_t level)
     {        
         int_setKSearch = config.int_setKSearch;
         double_setNormalDistanceWeight = config.double_setNormalDistanceWeight;
@@ -64,7 +66,7 @@ public:
     }
     
     // This function checks a point for NaN value. If Point value is NaN the function returns 1, otherwise 0.
-    bool checkPointNaN(pcl::PointXYZ& input)
+    inline bool checkPointNaN(pcl::PointXYZ& input)
     {
         if (input.x == input.x)
         {
@@ -73,8 +75,12 @@ public:
         return true;
     }
 
+    inline double degreesToRadians(double degrees) {
+        return -(degrees * (M_PI / 180));
+    }
+
     // Calculates quaternion from RANSAC model cofficients.
-    Eigen::Quaternionf obtainCylinderOrientationFromModel(pcl::ModelCoefficients& coefficients)
+    inline Eigen::Quaternionf obtainCylinderOrientationFromModel(pcl::ModelCoefficients& coefficients)
     {
         Eigen::Vector3f axis_vector(coefficients.values.at(3), coefficients.values.at(4), coefficients.values.at(5));
         Eigen::Vector3f up_vector(0.0, 0.0, -1.0);
@@ -87,7 +93,7 @@ public:
         return q;
     }
 
-    Eigen::Matrix3f editMatrix(Eigen::Matrix3f input_matrix)
+    inline Eigen::Matrix3f editMatrix(Eigen::Matrix3f input_matrix)
     {
         Eigen::Matrix3f matrix_rotation;
         float lf = 1 / sqrt(std::pow(input_matrix.coeff(0,2),2) + std::pow(input_matrix.coeff(1,2),2));
@@ -99,29 +105,37 @@ public:
         return matrix_rotation;
     }
 
-    Eigen::Matrix3f fixMatrixY(Eigen::Matrix3f input_matrix)
+    inline Eigen::Matrix3f fixMatrixY(Eigen::Matrix3f input_matrix)
     {
         Eigen::Matrix3f matrix_fixed_y;
 
         if (input_matrix.coeff(1,1) < 0)
         {
-
             matrix_fixed_y <<   -input_matrix.coeff(0,0), -input_matrix.coeff(0,1)  , input_matrix.coeff(0,2),
                                 -input_matrix.coeff(1,0), -input_matrix.coeff(1,1)  , input_matrix.coeff(1,2),
                                 input_matrix.coeff(2,0)     , input_matrix.coeff(2,1)       , input_matrix.coeff(2,2);
-        ROS_INFO("Fixed matrix y!");
+            return matrix_fixed_y;
         }
         else
         {
-            matrix_fixed_y = input_matrix;
+            return input_matrix;
         }
-        
-        
-        return matrix_fixed_y;
     }
 
+    inline Eigen::Matrix3f rotateMatrixZ(Eigen::Matrix3f input_matrix, double degrees)
+    {
+        Eigen::Matrix3f rotation_matrix;
+        double radians = degreesToRadians(degrees);
+
+        rotation_matrix <<  cosf(radians), -sinf(radians), 0,
+                            sinf(radians),  cosf(radians), 0,
+                            0,                          0, 1;
+
+        return rotation_matrix * input_matrix;
+    }
+    
     // This function returns the point with the highest z value from a pointcloud.
-    pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+    inline pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     {
         pcl::PointXYZ point_z_max;
         pcl::PointXYZ point_temp;
@@ -167,7 +181,7 @@ public:
 
         return point_z_max;
     }
-    pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::PointIndices::Ptr& indices_input)
+    inline pcl::PointXYZ getPointMaxZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::PointIndices::Ptr& indices_input)
     {
         pcl::PointXYZ point_z_max;
         pcl::PointXYZ point_temp;
@@ -190,7 +204,7 @@ public:
     }
 
     // Returns point with lowest z value from a pointcloud.
-    pcl::PointXYZ getPointMinZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+    inline pcl::PointXYZ getPointMinZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     {
         pcl::PointXYZ point_z_min;
         pcl::PointXYZ point_temp;
@@ -237,8 +251,44 @@ public:
         return point_z_min;
     }
 
+    // This function returns the centroid point of a given pointcloud and optionally point indices.
+    inline pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud)
+    {
+        pcl::CentroidPoint<pcl::PointXYZ> centroid;
+        pcl::PointXYZ point_centroid;
+
+        for (int i = 0; i < input_pointcloud->size(); i++)
+        {
+            if (!checkPointNaN(input_pointcloud->at(i)))
+            {
+                centroid.add(input_pointcloud->at(i));
+            }
+        }
+        
+        centroid.get(point_centroid);
+
+        return point_centroid;
+    }
+    inline pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointIndices::Ptr& input_indices)
+    {
+        pcl::CentroidPoint<pcl::PointXYZ> centroid;
+        pcl::PointXYZ point_centroid;
+
+        for (int i = 0; i < input_indices->indices.size(); i++)
+        {
+            if (!checkPointNaN(input_pointcloud->at(i)))
+            {
+                centroid.add(input_pointcloud->at(input_indices->indices.at(i)));
+            }
+        }
+        
+        centroid.get(point_centroid);
+
+        return point_centroid;
+    }
+    
     // Adds highest negative z value of the pointcloud, to each point of a pointcloud, so minimum z value will be 0.0.
-    void moveUp(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+    inline void moveUp(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     {
         pcl::PointXYZ point_z_min = getPointMinZ(input);
 
@@ -272,44 +322,8 @@ public:
         }
     }
 
-    // This function subtracts the lowest z value of the pointcloud, from each point of a pointcloud, so minimum z value will be 0.0.
-    void moveDown(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
-    {
-        pcl::PointXYZ point_z_min = getPointMinZ(input);
-
-        if (input->isOrganized())
-        {
-            int input_row = input->height;
-            int input_colum = input->width;
-
-            for (int r = 0; r < input_row; r++)
-            {
-                for (int c = 0; c < input_colum; c++)
-                {
-                    if (!checkPointNaN(input->at(c,r)))
-                    {                
-                        input->at(c,r).z = input->at(c,r).z - fabsf(point_z_min.z);
-                    }
-                }
-            }
-        }
-        else
-        {
-            int input_length = input->size();
-
-            for (int i = 0; i < input_length; i++)
-            {
-                if (!checkPointNaN(input->at(i)))
-                {
-                    input->at(i).z = input->at(i).z - fabsf(point_z_min.z);
-                    
-                }
-            }
-        }
-    }
-
     // Mirrors the pointcloud in z direction.
-    void mirrorPointcloudZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+    inline void mirrorPointcloudZ(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     {
         int input_length = input->size();
         pcl::PointXYZ point_temp;
@@ -323,7 +337,7 @@ public:
     }
 
     // Rotates the given pointcloud.
-    void rectifyTilt(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+    inline void rectifyTilt(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     {
         Eigen::Affine3f transform = Eigen::Affine3f::Identity();
 
@@ -335,7 +349,7 @@ public:
     }
 
     // This function uses RANSAC to remove all points representing the groundplane form a pointcloud.
-    void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
+    inline void removeGroundPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr& input)
     {
         // Ransac
         pcl::ModelCoefficients::Ptr coefficients_ptr (new pcl::ModelCoefficients);
@@ -366,7 +380,7 @@ public:
         */
     }
 
-    void addCropBox(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
+    inline void addCropBox(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
     {
         pcl::CropBox<pcl::PointXYZ> crop_box_filter;
         crop_box_filter.setInputCloud(input);
@@ -376,95 +390,61 @@ public:
         crop_box_filter.filter(*input);
     }
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr getCropBoxPointcloud(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, float minX, float minY, float minZ, float maxX, float maxY, float maxZ)
+    inline pcl::PointCloud<pcl::PointXYZ>::Ptr getCropBoxPointcloud(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, float x_pos, float y_pos, float x_length, float y_length, double rotation_z, bool center)
     {
         pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_ptr {new pcl::PointCloud<pcl::PointXYZ>};
         pcl::CropBox<pcl::PointXYZ> crop_box_filter;
+        Eigen::Vector3f vec_translation(x_pos, y_pos, 0.0);
+        Eigen::Vector3f vec_rotation(0.0, 0.0, degreesToRadians(rotation_z));
 
         crop_box_filter.setInputCloud(input);
         crop_box_filter.setNegative(false);
-        crop_box_filter.setMin(Eigen::Vector4f(minX, minY, minZ, 1.0));
-        crop_box_filter.setMax(Eigen::Vector4f(maxX, maxY, maxZ, 1.0));
+        if (center)
+        {
+            crop_box_filter.setMin(Eigen::Vector4f(-(x_length / 2), -(y_length / 2), -10.0, 1.0));
+            crop_box_filter.setMax(Eigen::Vector4f(x_length / 2, y_length / 2 , 10.0, 1.0));
+        }
+        else
+        {
+            crop_box_filter.setMin(Eigen::Vector4f(0.0, -(y_length / 2), -10.0, 1.0));
+            crop_box_filter.setMax(Eigen::Vector4f(x_length, y_length / 2, 10.0, 1.0));
+        }
+        
+        crop_box_filter.setRotation(vec_rotation);
+        crop_box_filter.setTranslation(vec_translation);
         crop_box_filter.filter(*pointcloud_ptr);
 
         return pointcloud_ptr;
     }
 
-    Eigen::Quaternionf getPointOrientation(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, float input_radius, pcl::PointXYZ input_center_point)
+    inline Eigen::Quaternionf getPointOrientation(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, float input_box_size, pcl::PointXYZ input_center_point)
     {
-        Eigen::Vector3f vector_dir;
-        Eigen::Vector3f vector_up;
         Eigen::Matrix3f matrix;
-        pcl::ModelCoefficients coeff;
-        pcl::PointXYZ p [11];
+        Eigen::Quaternionf quaternion;
         pcl::PointXYZ point_max_avg_z_box (0.0, 0.0, 0.0);
-        float c_x = input_center_point.x;
-        float c_y = input_center_point.y;
-
-        p[0].x = c_x - 2*input_radius;
-        p[0].y = c_y;
+        float rotation_temp;
         
-        p[1].x = c_x - 2*input_radius;
-        p[1].y = c_y + input_radius;
-        
-        p[2].x = c_x - input_radius;
-        p[2].y = c_y + input_radius;
-        
-        p[3].x = c_x;
-        p[3].y = c_y + input_radius;
-        
-        p[4].x = c_x + input_radius;
-        p[4].y = c_y + input_radius;
-        
-        p[5].x = c_x + input_radius;
-        p[5].y = c_y;
-        
-        p[6].x = c_x + input_radius;
-        p[6].y = c_y - input_radius;
-        
-        p[7].x = c_x + input_radius;
-        p[7].y = c_y - 2*input_radius;
-        
-        p[8].x = c_x;
-        p[8].y = c_y - 2*input_radius;
-        
-        p[9].x = c_x - input_radius;
-        p[9].y = c_y - 2*input_radius;
-        
-        p[10].x = c_x - 2*input_radius;
-        p[10].y = c_y - 2*input_radius;
-        
-        p[11].x = c_x - 2*input_radius;
-        p[11].y = c_y - input_radius;
-        
-        for (int i = 0; i < 11; i++)
+        for (int i = 0; i <= 359; i++)
         {
-            pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_temp_pointer (getCropBoxPointcloud(input_pointcloud, p[i].x, p[i].y, 0.0, p[i].x + input_radius, p[i].y + input_radius, 1.0));
-            pcl::PointXYZ point_avg_temp = getCentroidPoint(pointcloud_temp_pointer);
+            pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud_temp_ptr (getCropBoxPointcloud(input_pointcloud, input_center_point.x, input_center_point.y, input_box_size, input_box_size / 4, i, false));
+            pcl::PointXYZ point_avg_temp = getCentroidPoint(pointcloud_temp_ptr);
+            publisher_pointcloud_orientation_scan.publish(pointcloud_temp_ptr);
             if (point_avg_temp.z > point_max_avg_z_box.z)
             {
                 point_max_avg_z_box = point_avg_temp;
+                rotation_temp = i;
             }
         }
 
-        vector_dir << point_max_avg_z_box.x - input_center_point.x, point_max_avg_z_box.y - input_center_point.y, 0.0;
-        vector_up << 0, 1, 0;
+        matrix <<   0, 1, 0,
+                    -1, 0, 0,
+                    0, 0, 1;
 
-        Eigen::Vector3f xaxis= vector_up.cross(vector_dir);
-        xaxis.normalize();
-        Eigen::Vector3f yaxis = vector_dir.cross(xaxis);
-        yaxis.normalize();
-
-        matrix <<   xaxis.x(), xaxis.y(), xaxis.z(),
-                    yaxis.x(), yaxis.y(), yaxis.z(),
-                    vector_dir.x(), vector_dir.y(), vector_dir.z();
-
-        Eigen::Quaternionf quaternion_fixed(fixMatrixY(matrix));
-        return quaternion_fixed;
+        return Eigen::Quaternionf(fixMatrixY(rotateMatrixZ(matrix, rotation_temp)));
     }
 
     // This function uses RANSAC to fit a cylinder in to the given pointcloud.
-    void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoefficients::Ptr& output_coefficients, pcl::PointIndices::Ptr& output_point_indicies)
+    inline void findCylinder(pcl::PointCloud<pcl::PointXYZ>::Ptr& input, pcl::ModelCoefficients::Ptr& output_coefficients, pcl::PointIndices::Ptr& output_point_indicies)
     {
         pcl::PointCloud<pcl::Normal>::Ptr cloud_normals_ptr (new pcl::PointCloud<pcl::Normal>);
         pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ> ());
@@ -474,7 +454,6 @@ public:
         ne.setKSearch(int_setKSearch);
         ne.setInputCloud(input);
         ne.setSearchMethod(tree);
-        ROS_INFO_STREAM("Calculate normals...");
         ne.compute(*cloud_normals_ptr);
 
         // publish pointcloud to "pclEditNormals" topic
@@ -509,7 +488,7 @@ public:
     }
 
     // This function sets a sphere marker to the given point.
-    void setSphereMarker(pcl::PointXYZ input_point, std::string input_namespace, std::string input_frame, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
+    inline void setSphereMarker(pcl::PointXYZ input_point, std::string input_namespace, std::string input_frame, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
     {
         visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
@@ -546,7 +525,7 @@ public:
     }
 
     // This function removes the sphere marker.
-    void removeSphereMarker(std::string input_namespace, std::string input_frame)
+    inline void removeSphereMarker(std::string input_namespace, std::string input_frame)
     {
         visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
@@ -561,7 +540,7 @@ public:
     }
 
     // This function sets a cylinder marker to the given coefficients.
-    void setCylinderMarker(pcl::ModelCoefficients::Ptr& input_coefficients, std::string input_frame)
+    inline void setCylinderMarker(pcl::ModelCoefficients::Ptr& input_coefficients, std::string input_frame)
     {    
         visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
@@ -602,7 +581,7 @@ public:
     }
 
     // This function removes the existing cylinder marker.
-    void removeCylinderMarker(std::string input_frame)
+    inline void removeCylinderMarker(std::string input_frame)
     {
         visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
@@ -617,7 +596,7 @@ public:
     }
 
     // This function sets a points marker to the given point indices.
-    void setPointListMarker(pcl::PointIndices::Ptr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, std::string input_namespace, std::string input_frame, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
+    inline void setPointListMarker(pcl::PointIndices::Ptr& input_point_indices, pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, std::string input_namespace, std::string input_frame, float input_color_r, float input_color_g, float input_color_b, float input_color_a)
     {    
         visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
@@ -658,7 +637,7 @@ public:
     }
 
     // This function removes the existing points marker.
-    void removePointListMarker(std::string input_namespace, std::string input_frame)
+    inline void removePointListMarker(std::string input_namespace, std::string input_frame)
     {    
         visualization_msgs::Marker::Ptr marker_ptr (new visualization_msgs::Marker);
 
@@ -673,13 +652,12 @@ public:
     }
 
     // This function removes every marker set before.
-    void removeAllMarkers()
+    inline void removeAllMarkers()
     {
         removeCylinderMarker(string_frame);
         removeSphereMarker("z_max_all", string_frame);
         removeSphereMarker("z_max_cylinder", string_frame);
         removeSphereMarker("centroid_all", string_frame);
-        removeSphereMarker("centroid_cylinder_neighbors", string_frame);
         removeSphereMarker("centroid_cylinder_inliers", string_frame);
         removePointListMarker("cylinder_inliers", string_frame);
         removePointListMarker("cylinder_neighbors", string_frame);
@@ -687,7 +665,7 @@ public:
     }
 
     // This function resturns point indices of neighbor points of a single point.
-    pcl::PointIndices::Ptr getPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ input_point, float radius)
+    inline pcl::PointIndices::Ptr getPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ input_point, float radius)
     {
         pcl::PointIndices::Ptr indices_neighbors_ptr (new pcl::PointIndices);
 
@@ -708,7 +686,7 @@ public:
         return indices_neighbors_ptr;
     }
     
-    pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ search_point)
+    inline pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ search_point)
     {
         pcl::PointIndices::Ptr point_neighbors_indices_ptr (new pcl::PointIndices);
 
@@ -735,7 +713,7 @@ public:
         return point_neighbors_indices_ptr;
     }
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr getNewPcFromIndices(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud, pcl::PointIndices::Ptr &input_indices)
+    inline pcl::PointCloud<pcl::PointXYZ>::Ptr getNewPcFromIndices(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointIndices::Ptr& input_indices)
     {
         pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_pointcloud (new pcl::PointCloud<pcl::PointXYZ>);
 
@@ -746,36 +724,6 @@ public:
         extr_indices_filter.filter(*filtered_pointcloud);
 
         return filtered_pointcloud;
-    }
-
-    // This function returns the centroid point of a given pointcloud and optionally point indices.
-    pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud)
-    {
-        pcl::CentroidPoint<pcl::PointXYZ> centroid;
-
-        for (int i = 0; i < input_pointcloud->size(); i++)
-        {
-            centroid.add(input_pointcloud->at(i));
-        }
-
-        pcl::PointXYZ point_centroid;
-        centroid.get(point_centroid);
-
-        return point_centroid;
-    }
-    pcl::PointXYZ getCentroidPoint(pcl::PointCloud<pcl::PointXYZ>::Ptr &input_pointcloud, pcl::PointIndices::Ptr &input_indices)
-    {
-        pcl::CentroidPoint<pcl::PointXYZ> centroid;
-
-        for (int i = 0; i < input_indices->indices.size(); i++)
-        {
-            centroid.add(input_pointcloud->at(input_indices->indices.at(i)));
-        }
-
-        pcl::PointXYZ point_centroid;
-        centroid.get(point_centroid);
-
-        return point_centroid;
     }
 
     get_grasping_pointAction(std::string name) :
@@ -790,10 +738,11 @@ public:
 
         publisher_pointcloud = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited", 1);
         publisher_pointcloud_normals = n.advertise<sensor_msgs::PointCloud2>("pointcloud_edited_normals", 1);
-        publisher_vis_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
         publisher_pointcloud_debug = n.advertise<sensor_msgs::PointCloud2>("pointcloud_debug", 1);
+        publisher_pointcloud_orientation_scan = n.advertise<sensor_msgs::PointCloud2>("pointcloud_orientation_scan", 1);
+        publisher_vis_marker = n.advertise<visualization_msgs::Marker>("visualization_marker", 1);
         publisher_pose = n.advertise<geometry_msgs::PoseStamped>("grasping_pose", 1);
-
+        
         tf2_ros::TransformListener tfListener(tf_buffer);
 
         as_.start();
@@ -816,6 +765,8 @@ public:
         pcl::PointXYZ point_centroid_all;
         geometry_msgs::PoseStamped pose_result;
         Eigen::Quaternionf quaternion_cylinder;
+        Eigen::Quaternionf quaternion_point_z_all;
+        Eigen::Quaternionf quaternion_point_centroid_all;
         sensor_msgs::PointCloud2ConstPtr sen_msg_pc2_ptr;
         sensor_msgs::PointCloud2 sen_msg_pc2_tf;
 
@@ -845,6 +796,7 @@ public:
         removeAllMarkers();
 
         ROS_INFO_STREAM("Seq. Nr.: " << pcl_pc_ptr->header.seq);
+        
 
         // fix tilted pointcloudros_info_stream
         if (string_frame == "depth_camera_link")
@@ -867,13 +819,12 @@ public:
         // publish sphere marker at overall z max, color: purple
         point_max_z_all = getPointMaxZ(pcl_pc_ptr);
         setSphereMarker(point_max_z_all, "z_max_all", string_frame, 0.5, 0.0, 0.5, 1.0);
-
-        //pcl::PointIndicesPtr indices_max_z_neighbors = getPointNeighbors(pcl_pc_ptr, point_max_z_all, double_max_z_neighbor_radius);
-        //setPointListMarker(indices_max_z_neighbors, pcl_pc_ptr, "max_z_neighbors", string_frame, 0.5, 0.0, 0.5, 1.0);
+        quaternion_point_z_all = getPointOrientation(pcl_pc_ptr, 0.02, point_max_z_all);
 
         // publish points marker at centroid overall points, color: green
         point_centroid_all = getCentroidPoint(pcl_pc_ptr);
         setSphereMarker(point_centroid_all, "centroid_all", string_frame, 0.0, 1.0, 0.0, 1.0);
+        quaternion_point_centroid_all = getPointOrientation(pcl_pc_ptr, 0.02, point_centroid_all);
 
         // find cylinder and publish markers
         findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
@@ -897,31 +848,27 @@ public:
         }
         
         Eigen::Quaternionf quaternion_cylinder_fixed(fixMatrixY(editMatrix(quaternion_cylinder.toRotationMatrix())));
-        ROS_INFO("debug 893");
-        Eigen::Quaternionf quaternion_point_max_z_all_fixed(fixMatrixY(editMatrix(getPointOrientation(pcl_pc_ptr, 0.01, point_max_z_all).toRotationMatrix())));
-        ROS_INFO("debug 895");
-        Eigen::Quaternionf quaternion_point_centroid_all_fixed(fixMatrixY(editMatrix(getPointOrientation(pcl_pc_ptr, 0.01, point_centroid_all).toRotationMatrix())));
         
         switch (int_gp_method)
         {
-        case 0: //TODO: quaternion max z all
+        case 0: // Quaternion max z all
             pose_result.pose.position.x = point_max_z_all.x;
             pose_result.pose.position.y = point_max_z_all.y;
             pose_result.pose.position.z = std::min(point_max_z_all.z + 0.16 + 0.05, 0.16 + 0.02);
-            pose_result.pose.orientation.w = quaternion_point_max_z_all_fixed.w();
-            pose_result.pose.orientation.x = quaternion_point_max_z_all_fixed.x();
-            pose_result.pose.orientation.y = quaternion_point_max_z_all_fixed.y();
-            pose_result.pose.orientation.z = quaternion_point_max_z_all_fixed.z();
+            pose_result.pose.orientation.w = quaternion_point_z_all.w();
+            pose_result.pose.orientation.x = quaternion_point_z_all.x();
+            pose_result.pose.orientation.y = quaternion_point_z_all.y();
+            pose_result.pose.orientation.z = quaternion_point_z_all.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
-        case 1: //TODO: quaternion centroid all
+        case 1: // Quaternion centroid all
             pose_result.pose.position.x = point_centroid_all.x;
             pose_result.pose.position.y = point_centroid_all.y;
             pose_result.pose.position.z = std::min(point_centroid_all.z + 0.16 + 0.05, 0.16 + 0.02);
-            pose_result.pose.orientation.w = quaternion_point_centroid_all_fixed.w();
-            pose_result.pose.orientation.x = quaternion_point_centroid_all_fixed.x();
-            pose_result.pose.orientation.y = quaternion_point_centroid_all_fixed.y();
-            pose_result.pose.orientation.z = quaternion_point_centroid_all_fixed.z();
+            pose_result.pose.orientation.w = quaternion_point_centroid_all.w();
+            pose_result.pose.orientation.x = quaternion_point_centroid_all.x();
+            pose_result.pose.orientation.y = quaternion_point_centroid_all.y();
+            pose_result.pose.orientation.z = quaternion_point_centroid_all.z();
             pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
             break;
         case 2: // Cylinder max z
@@ -950,6 +897,7 @@ public:
         
         publisher_pose.publish(pose_result);
         result_.grasping_pose = pose_result;
+        result_.grasping_width = cylinder_coefficients_ptr->values.at(6);
         as_.setSucceeded(result_);
         ROS_INFO_STREAM("#### Done! ####");
     }

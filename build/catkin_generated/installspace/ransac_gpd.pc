@@ -1,0 +1,8 @@
+prefix=/usr/local
+
+Name: ransac_gpd
+Description: Description of ransac_gpd
+Version: 0.0.0
+Cflags: -I${prefix}/include
+Libs: -L${prefix}/lib 
+Requires: actionlib_msgs

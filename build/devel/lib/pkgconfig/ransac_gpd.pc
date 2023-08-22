@@ -1,0 +1,8 @@
+prefix=/home/jonas/ws/src/ransac_gpd/build/devel
+
+Name: ransac_gpd
+Description: Description of ransac_gpd
+Version: 0.0.0
+Cflags: -I/home/jonas/ws/src/ransac_gpd/build/devel/include
+Libs: -L${prefix}/lib 
+Requires: actionlib_msgs
