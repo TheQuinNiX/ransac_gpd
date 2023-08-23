@@ -40,6 +40,7 @@ class GraspTester:
         
 
         self.grasp_client = actionlib.SimpleActionClient('get_grasping_point', ransac_gpd.msg.get_grasping_pointAction)
+        self.state = actionlib.SimpleGoalState()
         print("Wait for action server...")
         self.grasp_client.wait_for_server()
         
@@ -61,38 +62,45 @@ class GraspTester:
             self.grasp_client.send_goal(goal)
             print("wait for result...")
             self.grasp_client.wait_for_result()
-
-            pose_result = self.grasp_client.get_result().grasping_pose
-
-            print("result:", pose_result)
-            self.load_twist_controller()
-            rospy.sleep(0.5)
-            self.send_gripper_command(0, 0, 0)
-            input("Check pose! Continue?")
-
-            self.load_position_controller()
-
-            # publish collision box
-            p = PoseStamped()
-            p.header.frame_id = self.robot.get_planning_frame()
-            p.pose.position.x = 0.4
-            p.pose.position.y = -0.20
-            p.pose.position.z = 0.8
-            self.scene.add_box("textile_collision_box", p, (0.4, 0.6, 0.22))
-
-            self.move_arm_to_pose_target(pose_result, z_offset=0.13)
             
-            # remove collision box
-            self.scene.remove_world_object("textile_collision_box")
-            
-            self.load_twist_controller()
-            self.move_down_cm(13)
-            self.send_gripper_command_z_correction(1.1, 0, 0.1)
-            self.move_up_cm(13)
+            print(self.grasp_client.get_state())
 
-            self.load_position_controller()
-            self.move_arm_to_named_target('idle_high')
-            input('Drop it? ')
+            if self.grasp_client.get_state() == 4:
+                print("Aborted!")
+
+            if self.grasp_client.get_state() == 3:
+                pose_result = self.grasp_client.get_result().grasping_pose
+
+                print("result:", pose_result)
+                self.load_twist_controller()
+                rospy.sleep(0.5)
+                self.send_gripper_command(0, 0, 0)
+                input("Check pose! Continue?")
+
+                self.load_position_controller()
+
+                # publish collision box
+                p = PoseStamped()
+                p.header.frame_id = self.robot.get_planning_frame()
+                p.pose.position.x = 0.4
+                p.pose.position.y = -0.20
+                p.pose.position.z = 0.8
+                self.scene.add_box("textile_collision_box", p, (0.4, 0.6, 0.25))
+
+                self.move_arm_to_pose_target(pose_result, z_offset=0.13)
+                
+                # remove collision box
+                self.scene.remove_world_object("textile_collision_box")
+                
+                self.load_twist_controller()
+                self.move_down_cm(13)
+                self.send_gripper_command_z_correction(1.1, 0, 0.1)
+                self.move_up_cm(13)
+
+                self.load_position_controller()
+                self.move_arm_to_named_target('idle_corner_very_high')
+                input('Drop it? ')
+                
             self.send_gripper_command(0, 0, 0)
             rospy.sleep(1.5)
             self.move_arm_to_named_target('idle_room_high')

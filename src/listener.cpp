@@ -9,7 +9,7 @@
 #include "pcl/features/normal_3d_omp.h"
 #include "pcl_ros/transforms.h"
 #include "pcl/filters/passthrough.h"
-#include "time.h"
+#include "chrono"
 #include "pcl/filters/extract_indices.h"
 #include "pcl/common/centroid.h"
 #include "pcl/filters/crop_box.h"
@@ -437,7 +437,6 @@ public:
                 pointcloud_max_avg_z_ptr = pointcloud_temp_ptr;
                 rotation_temp = i;
             }
-            ros::Duration(0.005).sleep();
         }
 
         publisher_pointcloud_orientation_scan.publish(pointcloud_max_avg_z_ptr);
@@ -733,8 +732,7 @@ public:
     }
 
     get_grasping_pointAction(std::string name) :
-        as_(n, name, boost::bind(&get_grasping_pointAction::callbackAction, this, _1), false),
-        action_name_(name)
+        as_(n, name, boost::bind(&get_grasping_pointAction::callbackAction, this, _1), false), action_name_(name)
     {
         dynamic_reconfigure::Server<ransac_gpd::parametersConfig> server;
         dynamic_reconfigure::Server<ransac_gpd::parametersConfig>::CallbackType f;
@@ -776,6 +774,9 @@ public:
         Eigen::Quaternionf quaternion_point_centroid_all;
         sensor_msgs::PointCloud2ConstPtr sen_msg_pc2_ptr;
         sensor_msgs::PointCloud2 sen_msg_pc2_tf;
+        auto begin = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
 
         sen_msg_pc2_ptr = ros::topic::waitForMessage<sensor_msgs::PointCloud2>("/depth/points", ros::Duration(2));
         
@@ -817,104 +818,204 @@ public:
 
         if (bool_crop_box)
         {
-            addCropBox(pcl_pc_ptr, 0.25, -0.45, 0.0, 0.55, 0.0, 0.25);
+            addCropBox(pcl_pc_ptr, 0.25, -0.50, 0.0, 0.55, 0.10, 0.25);
         }
 
         // publish pointcloud to "pclEdit" topic
         publisher_pointcloud.publish(*pcl_pc_ptr);
 
-        // publish sphere marker at overall z max, color: purple
-        point_max_z_all = getPointMaxZ(pcl_pc_ptr);
-        setSphereMarker(point_max_z_all, "z_max_all", string_frame, 0.5, 0.0, 0.5, 1.0);
-        quaternion_point_z_all = getPointOrientation(pcl_pc_ptr, 0.02, point_max_z_all);
-
-        // publish points marker at centroid overall points, color: green
-        point_centroid_all = getCentroidPoint(pcl_pc_ptr);
-        setSphereMarker(point_centroid_all, "centroid_all", string_frame, 0.0, 1.0, 0.0, 1.0);
-        quaternion_point_centroid_all = getPointOrientation(pcl_pc_ptr, 0.02, point_centroid_all);
-
-        // find cylinder and publish markers
-        findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
-        
-        if (cylinder_inliers_ptr->indices.size() > 0)
+        if (!pcl_pc_ptr->empty())
         {
-            // publish cylinder marker
-            setCylinderMarker(cylinder_coefficients_ptr,  string_frame);
+            // publish sphere marker at overall z max, color: purple
+            point_max_z_all = getPointMaxZ(pcl_pc_ptr);
+            setSphereMarker(point_max_z_all, "z_max_all", string_frame, 0.5, 0.0, 0.5, 1.0);
 
-            // publish points marker at cylinder inliers, color: blue
-            setPointListMarker(cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers", string_frame, 0.0, 0.0, 1.0, 1.0);
+            // publish points marker at centroid overall points, color: green
+            point_centroid_all = getCentroidPoint(pcl_pc_ptr);
+            setSphereMarker(point_centroid_all, "centroid_all", string_frame, 0.0, 1.0, 0.0, 1.0);
+            
+            switch (int_gp_method)
+            {
+            case 0: // Max z all
+                // start timer
+                begin = std::chrono::high_resolution_clock::now();
 
-            // publish sphere marker at cylinder inliers z max, color: blue
-            point_max_z_cylinder = getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr);
-            setSphereMarker(point_max_z_cylinder, "z_max_cylinder", string_frame, 0.0, 0.0, 1.0, 1.0);
+                point_max_z_all = getPointMaxZ(pcl_pc_ptr);
+                quaternion_point_z_all = getPointOrientation(pcl_pc_ptr, 0.02, point_max_z_all);
+                pose_result.pose.position.x = point_max_z_all.x;
+                pose_result.pose.position.y = point_max_z_all.y;
+                pose_result.pose.position.z = std::max(point_max_z_all.z + 0.16 - 0.01, 0.16 + 0.01);
+                pose_result.pose.orientation.w = quaternion_point_z_all.w();
+                pose_result.pose.orientation.x = quaternion_point_z_all.x();
+                pose_result.pose.orientation.y = quaternion_point_z_all.y();
+                pose_result.pose.orientation.z = quaternion_point_z_all.z();
+                pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
 
-            // publish sphere marker at cylinder inliers centroid color: red
-            point_centroid_cylinder = getCentroidPoint(pcl_pc_ptr, cylinder_inliers_ptr);
-            setSphereMarker(point_centroid_cylinder, "centroid_cylinder_inliers", string_frame, 1.0, 0.0, 0.0, 1.0);
-            quaternion_cylinder = obtainCylinderOrientationFromModel(*cylinder_coefficients_ptr);
+                // stop timer and get result
+                end = std::chrono::high_resolution_clock::now();
+                elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+                printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
+                ROS_INFO_STREAM("Max. Z: " << point_max_z_all.z);
+
+                pose_result_copy = pose_result;
+                pose_result_copy.pose.position.z = std::max(point_max_z_all.z, 0.02f);
+
+                publisher_pose.publish(pose_result_copy);
+                result_.grasping_pose = pose_result;
+                result_.grasping_width = 1.0;
+                as_.setSucceeded(result_);
+                ROS_INFO_STREAM("#### Done! ####");
+                break;
+            case 1: // Centroid all
+                // start timer
+                begin = std::chrono::high_resolution_clock::now();
+
+                point_centroid_all = getCentroidPoint(pcl_pc_ptr);
+                quaternion_point_centroid_all = getPointOrientation(pcl_pc_ptr, 0.02, point_centroid_all);
+                pose_result.pose.position.x = point_centroid_all.x;
+                pose_result.pose.position.y = point_centroid_all.y;
+                pose_result.pose.position.z = std::max(point_centroid_all.z + 0.16 - 0.01, 0.16 + 0.01);
+                pose_result.pose.orientation.w = quaternion_point_centroid_all.w();
+                pose_result.pose.orientation.x = quaternion_point_centroid_all.x();
+                pose_result.pose.orientation.y = quaternion_point_centroid_all.y();
+                pose_result.pose.orientation.z = quaternion_point_centroid_all.z();
+                pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+
+                // stop timer and get result
+                end = std::chrono::high_resolution_clock::now();
+                elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+                printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
+                ROS_INFO_STREAM("Max. Z: " << point_max_z_all.z);
+                ROS_INFO_STREAM("Centroid. Z: " << point_centroid_all.z);
+
+                pose_result_copy = pose_result;
+                pose_result_copy.pose.position.z = std::max(point_centroid_all.z, 0.02f);
+
+                publisher_pose.publish(pose_result_copy);
+                result_.grasping_pose = pose_result;
+                result_.grasping_width = 1.0;
+                as_.setSucceeded(result_);
+                ROS_INFO_STREAM("#### Done! ####");
+                break;
+            case 2: // Cylinder max z
+                // start timer
+                begin = std::chrono::high_resolution_clock::now();
+                
+                // find cylinder and publish markers
+                findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
+                
+                if (cylinder_inliers_ptr->indices.size() > 0)
+                {
+                    // publish cylinder marker
+                    setCylinderMarker(cylinder_coefficients_ptr,  string_frame);
+
+                    // publish points marker at cylinder inliers, color: blue
+                    setPointListMarker(cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers", string_frame, 0.0, 0.0, 1.0, 1.0);
+
+                    // publish sphere marker at cylinder inliers z max, color: blue
+                    point_max_z_cylinder = getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr);
+                    setSphereMarker(point_max_z_cylinder, "z_max_cylinder", string_frame, 0.0, 0.0, 1.0, 1.0);
+
+                    // publish sphere marker at cylinder inliers centroid color: red
+                    point_centroid_cylinder = getCentroidPoint(pcl_pc_ptr, cylinder_inliers_ptr);
+                    setSphereMarker(point_centroid_cylinder, "centroid_cylinder_inliers", string_frame, 1.0, 0.0, 0.0, 1.0);
+                    quaternion_cylinder = obtainCylinderOrientationFromModel(*cylinder_coefficients_ptr);
+
+                    Eigen::Quaternionf quaternion_cylinder_fixed(fixMatrixY(editMatrix(quaternion_cylinder.toRotationMatrix())));
+
+                    pose_result.pose.position.x = point_max_z_cylinder.x;
+                    pose_result.pose.position.y = point_max_z_cylinder.y;
+                    pose_result.pose.position.z = std::max(point_max_z_cylinder.z + 0.16 - 0.01, 0.16 + 0.01);
+                    pose_result.pose.orientation.w = quaternion_cylinder_fixed.w();
+                    pose_result.pose.orientation.x = quaternion_cylinder_fixed.x();
+                    pose_result.pose.orientation.y = quaternion_cylinder_fixed.y();
+                    pose_result.pose.orientation.z = quaternion_cylinder_fixed.z();
+                    pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+
+                    // stop timer and get result
+                    end = std::chrono::high_resolution_clock::now();
+                    elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+                    printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
+                    ROS_INFO_STREAM("Max. Z: " << point_max_z_all.z);
+                    ROS_INFO_STREAM("Max. Z Cylinder: " << point_max_z_cylinder.z);
+
+                    pose_result_copy = pose_result;
+                    pose_result_copy.pose.position.z = std::max(point_max_z_cylinder.z, 0.02f);
+
+                    publisher_pose.publish(pose_result_copy);
+                    result_.grasping_pose = pose_result;
+                    result_.grasping_width = cylinder_coefficients_ptr->values.at(6);
+                    as_.setSucceeded(result_);
+                    ROS_INFO_STREAM("#### Done! ####");
+                    break;
+                }
+                ROS_INFO("No Cylinder found!");
+                as_.setAborted(result_);
+                break;
+            case 3: // Cylinder centroid
+                // start timer
+                begin = std::chrono::high_resolution_clock::now();
+                
+                // find cylinder and publish markers
+                findCylinder(pcl_pc_ptr, cylinder_coefficients_ptr, cylinder_inliers_ptr);
+                
+                if (cylinder_inliers_ptr->indices.size() > 0)
+                {
+                    // publish cylinder marker
+                    setCylinderMarker(cylinder_coefficients_ptr,  string_frame);
+
+                    // publish points marker at cylinder inliers, color: blue
+                    setPointListMarker(cylinder_inliers_ptr, pcl_pc_ptr, "cylinder_inliers", string_frame, 0.0, 0.0, 1.0, 1.0);
+
+                    // publish sphere marker at cylinder inliers z max, color: blue
+                    point_max_z_cylinder = getPointMaxZ(pcl_pc_ptr, cylinder_inliers_ptr);
+                    setSphereMarker(point_max_z_cylinder, "z_max_cylinder", string_frame, 0.0, 0.0, 1.0, 1.0);
+
+                    // publish sphere marker at cylinder inliers centroid color: red
+                    point_centroid_cylinder = getCentroidPoint(pcl_pc_ptr, cylinder_inliers_ptr);
+                    setSphereMarker(point_centroid_cylinder, "centroid_cylinder_inliers", string_frame, 1.0, 0.0, 0.0, 1.0);
+                    quaternion_cylinder = obtainCylinderOrientationFromModel(*cylinder_coefficients_ptr);
+
+                    Eigen::Quaternionf quaternion_cylinder_fixed(fixMatrixY(editMatrix(quaternion_cylinder.toRotationMatrix())));
+
+                    pose_result.pose.position.x = point_centroid_cylinder.x;
+                    pose_result.pose.position.y = point_centroid_cylinder.y;
+                    pose_result.pose.position.z = std::max(point_centroid_cylinder.z + 0.16 - 0.01, 0.16 + 0.01);
+                    pose_result.pose.orientation.w = quaternion_cylinder_fixed.w();
+                    pose_result.pose.orientation.x = quaternion_cylinder_fixed.x();
+                    pose_result.pose.orientation.y = quaternion_cylinder_fixed.y();
+                    pose_result.pose.orientation.z = quaternion_cylinder_fixed.z();
+                    pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+                    
+                    // stop timer and get result
+                    end = std::chrono::high_resolution_clock::now();
+                    elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+                    printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
+                    ROS_INFO_STREAM("Max. Z: " << point_max_z_all.z);
+                    ROS_INFO_STREAM("Max. Z Cylinder: " << point_centroid_cylinder.z);
+                    
+                    pose_result_copy = pose_result;
+                    pose_result_copy.pose.position.z = std::max(point_centroid_cylinder.z, 0.02f);
+
+                    publisher_pose.publish(pose_result_copy);
+                    result_.grasping_pose = pose_result;
+                    result_.grasping_width = cylinder_coefficients_ptr->values.at(6);
+                    as_.setSucceeded(result_);
+                    ROS_INFO_STREAM("#### Done! ####");
+                    break;
+                }
+                ROS_INFO("No Cylinder found!");
+                as_.setAborted(result_);
+                break;
+            default:
+                break;
+            }
         }
-        
-        Eigen::Quaternionf quaternion_cylinder_fixed(fixMatrixY(editMatrix(quaternion_cylinder.toRotationMatrix())));
-        
-        switch (int_gp_method)
+        else
         {
-        case 0: // Max z all
-            pose_result.pose.position.x = point_max_z_all.x;
-            pose_result.pose.position.y = point_max_z_all.y;
-            pose_result.pose.position.z = std::max(point_max_z_all.z + 0.16 - 0.02, 0.16 + 0.02);
-            pose_result.pose.orientation.w = quaternion_point_z_all.w();
-            pose_result.pose.orientation.x = quaternion_point_z_all.x();
-            pose_result.pose.orientation.y = quaternion_point_z_all.y();
-            pose_result.pose.orientation.z = quaternion_point_z_all.z();
-            pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
-            pose_result_copy = pose_result;
-            pose_result_copy.pose.position.z = std::max(point_max_z_all.z, 0.02f);
-            break;
-        case 1: // Centroid all
-            pose_result.pose.position.x = point_centroid_all.x;
-            pose_result.pose.position.y = point_centroid_all.y;
-            pose_result.pose.position.z = std::max(point_centroid_all.z + 0.16 - 0.02, 0.16 + 0.02);
-            pose_result.pose.orientation.w = quaternion_point_centroid_all.w();
-            pose_result.pose.orientation.x = quaternion_point_centroid_all.x();
-            pose_result.pose.orientation.y = quaternion_point_centroid_all.y();
-            pose_result.pose.orientation.z = quaternion_point_centroid_all.z();
-            pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
-            pose_result_copy = pose_result;
-            pose_result_copy.pose.position.z = std::max(point_centroid_all.z, 0.02f);
-            break;
-        case 2: // Cylinder max z
-            pose_result.pose.position.x = point_max_z_cylinder.x;
-            pose_result.pose.position.y = point_max_z_cylinder.y;
-            pose_result.pose.position.z = std::max(point_max_z_cylinder.z + 0.16 - 0.02, 0.16 + 0.02);
-            pose_result.pose.orientation.w = quaternion_cylinder_fixed.w();
-            pose_result.pose.orientation.x = quaternion_cylinder_fixed.x();
-            pose_result.pose.orientation.y = quaternion_cylinder_fixed.y();
-            pose_result.pose.orientation.z = quaternion_cylinder_fixed.z();
-            pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
-            pose_result_copy = pose_result;
-            pose_result_copy.pose.position.z = std::max(point_max_z_cylinder.z, 0.02f);
-            break;
-        case 3: // Cylinder centroid
-            pose_result.pose.position.x = point_centroid_cylinder.x;
-            pose_result.pose.position.y = point_centroid_cylinder.y;
-            pose_result.pose.position.z = std::max(point_centroid_cylinder.z + 0.16 - 0.02, 0.16 + 0.02);
-            pose_result.pose.orientation.w = quaternion_cylinder_fixed.w();
-            pose_result.pose.orientation.x = quaternion_cylinder_fixed.x();
-            pose_result.pose.orientation.y = quaternion_cylinder_fixed.y();
-            pose_result.pose.orientation.z = quaternion_cylinder_fixed.z();
-            pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
-            pose_result_copy = pose_result;
-            pose_result_copy.pose.position.z = std::max(point_centroid_cylinder.z, 0.02f);
-            break;
-        default:
-            break;
+            ROS_INFO("PointCloud is empty! Aborted");
+            as_.setAborted(result_);
         }
-        
-        publisher_pose.publish(pose_result_copy);
-        result_.grasping_pose = pose_result;
-        result_.grasping_width = cylinder_coefficients_ptr->values.at(6);
-        as_.setSucceeded(result_);
-        ROS_INFO_STREAM("#### Done! ####");
     }
 };
 
