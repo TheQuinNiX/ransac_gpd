@@ -42,6 +42,8 @@ protected:
     // Dynamic reconfigure
     int int_gp_method;
     int int_setKSearch;
+    double double_setMinRadius;
+    double double_setMaxRadius;
     double double_setNormalDistanceWeight;
     double double_setDistanceThreshold;
     std::string string_frame;
@@ -62,6 +64,8 @@ public:
         bool_crop_box = config.bool_crop_box;
         int_gp_method = config.gp_method;
         double_max_z_neighbor_radius = config.double_max_z_neighbor_radius;
+        double_setMinRadius = config.double_setMinRadius;
+        double_setMaxRadius = config.double_setMaxRadius;
         ROS_INFO("Parameters changed!");
     }
     
@@ -472,7 +476,7 @@ public:
         seg.setNormalDistanceWeight (double_setNormalDistanceWeight);
         seg.setMaxIterations (30000);
         seg.setDistanceThreshold(double_setDistanceThreshold);
-        seg.setRadiusLimits(0.002, 0.012);
+        seg.setRadiusLimits(double_setMinRadius, double_setMaxRadius);
         //seg.setRadiusLimits(0.0002, 0.0008);
         //seg.setRadiusLimits(0.02, 0.04);
         //seg.setAxis(axis);
@@ -818,7 +822,7 @@ public:
 
         if (bool_crop_box)
         {
-            addCropBox(pcl_pc_ptr, 0.25, -0.50, 0.0, 0.55, 0.10, 0.25);
+            addCropBox(pcl_pc_ptr, 0.25, -0.50, 0.0, 0.60, 0.10, 0.25);
         }
 
         // publish pointcloud to "pclEdit" topic
@@ -866,7 +870,37 @@ public:
                 as_.setSucceeded(result_);
                 ROS_INFO_STREAM("#### Done! ####");
                 break;
-            case 1: // Centroid all
+            case 1: // Max z all fixed orientation
+                // start timer
+                begin = std::chrono::high_resolution_clock::now();
+
+                point_max_z_all = getPointMaxZ(pcl_pc_ptr);
+                //quaternion_point_z_all = getPointOrientation(pcl_pc_ptr, 0.02, point_max_z_all);
+                pose_result.pose.position.x = point_max_z_all.x;
+                pose_result.pose.position.y = point_max_z_all.y;
+                pose_result.pose.position.z = std::max(point_max_z_all.z + 0.16 - 0.01, 0.16 + 0.01);
+                pose_result.pose.orientation.w = -1;
+                pose_result.pose.orientation.x = 0;
+                pose_result.pose.orientation.y = 0;
+                pose_result.pose.orientation.z = 0;
+                pcl_conversions::fromPCL(pcl_pc_ptr->header, pose_result.header);
+
+                // stop timer and get result
+                end = std::chrono::high_resolution_clock::now();
+                elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
+                printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
+                ROS_INFO_STREAM("Max. Z: " << point_max_z_all.z);
+
+                pose_result_copy = pose_result;
+                pose_result_copy.pose.position.z = std::max(point_max_z_all.z, 0.02f);
+
+                publisher_pose.publish(pose_result_copy);
+                result_.grasping_pose = pose_result;
+                result_.grasping_width = 1.0;
+                as_.setSucceeded(result_);
+                ROS_INFO_STREAM("#### Done! ####");
+                break;
+            case 2: // Centroid all
                 // start timer
                 begin = std::chrono::high_resolution_clock::now();
 
@@ -897,7 +931,7 @@ public:
                 as_.setSucceeded(result_);
                 ROS_INFO_STREAM("#### Done! ####");
                 break;
-            case 2: // Cylinder max z
+            case 3: // Cylinder max z
                 // start timer
                 begin = std::chrono::high_resolution_clock::now();
                 
@@ -952,7 +986,7 @@ public:
                 ROS_INFO("No Cylinder found!");
                 as_.setAborted(result_);
                 break;
-            case 3: // Cylinder centroid
+            case 4: // Cylinder centroid
                 // start timer
                 begin = std::chrono::high_resolution_clock::now();
                 
@@ -992,7 +1026,7 @@ public:
                     elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin);
                     printf("Time measured: %.3f seconds.\n", elapsed.count() * 1e-9);
                     ROS_INFO_STREAM("Max. Z: " << point_max_z_all.z);
-                    ROS_INFO_STREAM("Max. Z Cylinder: " << point_centroid_cylinder.z);
+                    ROS_INFO_STREAM("Centroid Z Cylinder: " << point_centroid_cylinder.z);
                     
                     pose_result_copy = pose_result;
                     pose_result_copy.pose.position.z = std::max(point_centroid_cylinder.z, 0.02f);
