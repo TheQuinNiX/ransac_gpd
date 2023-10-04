@@ -48,7 +48,6 @@ protected:
     double double_setDistanceThreshold;
     std::string string_frame;
     bool bool_crop_box;
-    double double_max_z_neighbor_radius;
 
     tf2_ros::Buffer tf_buffer;
     
@@ -63,7 +62,6 @@ public:
         string_frame = config.string_frame;
         bool_crop_box = config.bool_crop_box;
         int_gp_method = config.gp_method;
-        double_max_z_neighbor_radius = config.double_max_z_neighbor_radius;
         double_setMinRadius = config.double_setMinRadius;
         double_setMaxRadius = config.double_setMaxRadius;
         ROS_INFO("Parameters changed!");
@@ -671,68 +669,6 @@ public:
         removePointListMarker("cylinder_inliers", string_frame);
         removePointListMarker("cylinder_neighbors", string_frame);
         removePointListMarker("max_z_neighbors", string_frame);
-    }
-
-    // This function resturns point indices of neighbor points of a single point.
-    inline pcl::PointIndices::Ptr getPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ input_point, float radius)
-    {
-        pcl::PointIndices::Ptr indices_neighbors_ptr (new pcl::PointIndices);
-
-        pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
-            kdtree.setInputCloud(input_pointcloud);
-            
-            std::vector<int> indices_radius_search;
-            std::vector<float> radius_squared_distance;
-
-            if (kdtree.radiusSearch(input_point, radius, indices_radius_search, radius_squared_distance) > 0)
-            {
-                for (int i = 0; i < indices_radius_search.size(); i++)
-                {
-                    indices_neighbors_ptr->indices.push_back(indices_radius_search[i]);
-                }
-            }
-        ROS_INFO_STREAM("Neighbors: " << indices_neighbors_ptr->indices.size());
-        return indices_neighbors_ptr;
-    }
-    
-    inline pcl::PointIndices::Ptr removeNotDirectPointNeighbors(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointXYZ search_point)
-    {
-        pcl::PointIndices::Ptr point_neighbors_indices_ptr (new pcl::PointIndices);
-
-        if (input_pointcloud->size() > 0)
-        {
-            pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
-            kdtree.setInputCloud(input_pointcloud);
-            
-            std::vector<int> point_indices_radius_search;
-            std::vector<float> point_radius_squared_distance;
-            
-            //float radius = 0.0001f * rand () / (RAND_MAX + 1.0f);
-            float radius = 0.0000001f;
-
-            if (kdtree.radiusSearch (search_point, radius, point_indices_radius_search, point_radius_squared_distance) > 0)
-            {
-                for (int i = 0; i < point_indices_radius_search.size(); i++)
-                {
-                    point_neighbors_indices_ptr->indices.push_back(point_indices_radius_search[i]);
-                }
-            }
-        }
-
-        return point_neighbors_indices_ptr;
-    }
-
-    inline pcl::PointCloud<pcl::PointXYZ>::Ptr getNewPcFromIndices(pcl::PointCloud<pcl::PointXYZ>::Ptr& input_pointcloud, pcl::PointIndices::Ptr& input_indices)
-    {
-        pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_pointcloud (new pcl::PointCloud<pcl::PointXYZ>);
-
-        pcl::ExtractIndices<pcl::PointXYZ> extr_indices_filter;
-        extr_indices_filter.setInputCloud(input_pointcloud);
-        extr_indices_filter.setIndices(input_indices);
-        extr_indices_filter.setNegative(false);
-        extr_indices_filter.filter(*filtered_pointcloud);
-
-        return filtered_pointcloud;
     }
 
     get_grasping_pointAction(std::string name) :
